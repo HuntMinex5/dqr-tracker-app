@@ -7223,39 +7223,49 @@ async function runsTrack(owner, name, rec, now0) {
         if (process.env.RUNS_DEBUG) console.log('[runs-debug] bo qua (ve lobby do bam Force lobby, khong phai thua)', owner, name);
         runsDbgPush({ t: now0, k: 'discard', owner, run: { dungeon: st.dungeon || null, win: false, forced: true } });
       } else {
-        await runsConclude(owner, { dungeon: st.dungeon, jobId: st.jobId, win: false }, now0);
+        // Da tung thay tin hieu thang (vd thang trum chinh roi qua danh Raid Rodin) ma ve lobby truoc khi kip
+        // chot (grace 20s) thi van tinh THANG, khong tinh thua - xem st.sawWin o tren.
+        await runsConclude(owner, { dungeon: st.dungeon, jobId: st.jobId, win: !!st.sawWin }, now0);
       }
-      st.active = false; st.verdictSince = null; st.pendingWin = false;
+      st.active = false; st.verdictSince = null; st.pendingWin = false; st.sawWin = false;
     }
     return;
   }
 
   // Dang trong dungeon: bat dau theo doi 1 luot moi neu chua co, hoac cap nhat luot dang theo doi.
-  if (!st.active) { st.active = true; st.dungeon = liveDungeon || runsDungeonFor(owner, name); st.jobId = jobId; st.verdictSince = null; st.pendingWin = false; if (process.env.RUNS_DEBUG) console.log('[runs-debug] start run', { owner, name, dungeon: st.dungeon, jobId: st.jobId }); }
+  if (!st.active) { st.active = true; st.dungeon = liveDungeon || runsDungeonFor(owner, name); st.jobId = jobId; st.verdictSince = null; st.pendingWin = false; st.sawWin = false; if (process.env.RUNS_DEBUG) console.log('[runs-debug] start run', { owner, name, dungeon: st.dungeon, jobId: st.jobId }); }
   st.lastAt = now0;
   if (liveDungeon) st.dungeon = liveDungeon;
   if (jobId) st.jobId = jobId;
 
-  // THUA CHAC CHAN (giong E() ben Harvard): het mang (noLivesLeft) hoac het gio (outOfTime) - chot NGAY, khong doi grace.
-  if (rec.dungeonProgress === 'noLivesLeft' || rec.dungeonProgress === 'outOfTime') {
+  // THANG (giong V() ben Harvard): dungeonFinished=true hoac dungeonProgress=="bossKilled". Mot khi DA THAY tin
+  // hieu nay 1 lan cho luot dang theo doi, GHI NHO lai (st.sawWin) va KHONG CHO cac tin hieu sau do (kieu nhu
+  // dungeonStarted=false/timeUp khi buoc sang man Raid Rodin phu, hoac het mang/het gio bao tre) lat lai thanh
+  // thua nua - trong game da thang tr bum chinh thi khong the "thua lai" duoc. Thieu dong nay la nguyen nhan
+  // loi "thang trum chinh, qua danh Rodin thua, Northern Lands lai bi tinh thua theo" nguoi dung bao.
+  const winSignal = rec.dungeonFinished === true || rec.dungeonProgress === 'bossKilled';
+  if (winSignal) st.sawWin = true;
+
+  // THUA CHAC CHAN (giong E() ben Harvard): het mang (noLivesLeft) hoac het gio (outOfTime) - chot NGAY, khong doi
+  // grace - TRU KHI da thay tin hieu thang cho luot nay roi (xem st.sawWin o tren).
+  if (!st.sawWin && (rec.dungeonProgress === 'noLivesLeft' || rec.dungeonProgress === 'outOfTime')) {
     if (process.env.RUNS_DEBUG) console.log('[runs-debug] thua chac chan (dungeonProgress=' + rec.dungeonProgress + ')', { owner, name });
     await runsConclude(owner, { dungeon: st.dungeon, jobId: st.jobId, win: false }, now0);
-    st.active = false; st.verdictSince = null; st.pendingWin = false;
+    st.active = false; st.verdictSince = null; st.pendingWin = false; st.sawWin = false;
     return;
   }
 
-  // THANG (giong V() ben Harvard): dungeonFinished=true hoac dungeonProgress=="bossKilled".
-  const winSignal = rec.dungeonFinished === true || rec.dungeonProgress === 'bossKilled';
   // THUA "mem" (giong p()/not-inDungeon/not-dungeonStarted ben Harvard): dong ho timeLeftGui het gio (00:00), hoac
-  // game bao dungeonStarted=false (luot coi nhu da ket thuc/chua thuc su bat dau).
-  const loseSignal = !winSignal && (rec.timeUp === true || rec.dungeonStarted === false);
+  // game bao dungeonStarted=false (luot coi nhu da ket thuc/chua thuc su bat dau) - cung bo qua neu da sawWin.
+  const loseSignal = !st.sawWin && !winSignal && (rec.timeUp === true || rec.dungeonStarted === false);
+  const effWin = winSignal || st.sawWin;
 
-  if (winSignal || loseSignal) {
-    if (st.verdictSince == null || st.pendingWin !== winSignal) { st.verdictSince = now0; st.pendingWin = winSignal; }
+  if (effWin || loseSignal) {
+    if (st.verdictSince == null || st.pendingWin !== effWin) { st.verdictSince = now0; st.pendingWin = effWin; }
     if (now0 - st.verdictSince >= VERDICT_GRACE_MS) {
-      if (process.env.RUNS_DEBUG) console.log('[runs-debug] chot sau grace', { owner, name, win: winSignal });
-      await runsConclude(owner, { dungeon: st.dungeon, jobId: st.jobId, win: winSignal }, now0);
-      st.active = false; st.verdictSince = null; st.pendingWin = false;
+      if (process.env.RUNS_DEBUG) console.log('[runs-debug] chot sau grace', { owner, name, win: effWin });
+      await runsConclude(owner, { dungeon: st.dungeon, jobId: st.jobId, win: effWin }, now0);
+      st.active = false; st.verdictSince = null; st.pendingWin = false; st.sawWin = false;
     }
   } else {
     st.verdictSince = null; st.pendingWin = false;
