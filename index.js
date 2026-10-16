@@ -7142,7 +7142,13 @@ function runsEntry(owner, name, mk) { const b = runsBox(owner), d = b.data; let 
 // thang/thua chung (game thuong gui rieng cho tung thanh vien party), neu cong het thi se bi CONG TRUNG nhieu lan
 // cho dung 1 lan thang/thua that. Co che nay dam bao: voi CUNG 1 (owner, jobId, loai ket qua), chi acc nao "chot"
 // TRUOC moi duoc cong diem - acc khac trong CUNG party bao cao SAU cho CUNG jobId + loai ket qua do se bi bo qua.
-const RUNS_JOB_MARK_TTL_MS = 60 * 60 * 1000;   // don rac mark qua cu (jobId Roblox la GUID, thuc te khong bao gio lap lai - chi de phong phinh neu server chay rat lau)
+// QUAN TRONG: jobId la ID may chu Roblox - KHONG doi khi bam "Replay/Choi lai" ngay tai cho (khong roi may chu),
+// nen 1 nguoi co the thang/thua CUNG 1 dungeon nhieu lan lien tiep voi CUNG 1 jobId. TTL o day vi vay phai NGAN
+// (chi du de gom cac bao cao cua CUNG 1 lan thang/thua that tu nhieu thanh vien party/nhieu may chu Vercel, von
+// chi lech nhau toi da ~20-40s do grace 20s cua tung acc khong dong bo), KHONG duoc dai (truoc la 1 tieng - qua
+// dai, lam CAC LUOT THANG THAT SU sau do cung dungeon+ket qua, cung jobId, trong vong 1 tieng do bi hieu nham la
+// "bao lai" va bi loai bo het - day la nguyen nhan "danh thang roi ma khong cong" nguoi dung bao).
+const RUNS_JOB_MARK_TTL_MS = 60 * 1000;
 // TRUOC DAY: Map trong RAM (trong 1 tien trinh). Tren Vercel moi request co the roi vao 1 may chu (serverless
 // instance) KHAC NHAU - moi may co RAM rieng, khong thay duoc mark cua may khac - nen 1 luot thang/thua THAT co
 // the bi NHIEU may chu khac nhau DOC LAP chot cung 1 luot do (vi co che grace 20s o rjTrack cung chi "nho" trong
