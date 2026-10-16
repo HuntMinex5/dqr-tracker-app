@@ -5,7 +5,8 @@
   "description": "DQR Tracker - app Windows rieng, mo giao dien tu server that (khong nhung server ben trong)",
   "main": "main.js",
   "scripts": {
-    "build": "electron-builder --win portable"
+    "build": "electron-builder --win nsis",
+    "build:portable": "electron-builder --win portable"
   },
   "devDependencies": {
     "electron": "^33.0.0",
@@ -23,9 +24,23 @@
       "app/**/*"
     ],
     "win": {
-      "target": "portable",
+      "target": ["nsis"],
       "icon": "icon.ico",
       "requestedExecutionLevel": "requireAdministrator"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": true,
+      "allowToChangeInstallationDirectory": true,
+      "allowElevation": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "DQR Tracker",
+      "installerIcon": "icon.ico",
+      "uninstallerIcon": "icon.ico",
+      "uninstallDisplayName": "DQR Tracker",
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "DQR-Tracker-Setup-${version}.${ext}"
     }
   }
 }

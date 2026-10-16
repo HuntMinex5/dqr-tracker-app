@@ -52,7 +52,7 @@ REM Bo qua buoc tim/tai cong cu ky so (code signing) - khong can cho build ca nh
 REM khong ky so, va buoc nay hay loi "Cannot create symbolic link" tren Windows neu
 REM chua bat Developer Mode / khong chay voi quyen Administrator.
 set CSC_IDENTITY_AUTO_DISCOVERY=false
-call npx electron-builder --win portable
+call npx electron-builder --win nsis
 if errorlevel 1 (
   echo [LOI] Dong goi app bi loi. Xem thong bao loi phia tren.
   pause
@@ -60,11 +60,14 @@ if errorlevel 1 (
 )
 
 echo.
-echo Xong! File app .exe nam trong thu muc:  %cd%\dist\
+echo Xong! File cai dat (Setup.exe) nam trong thu muc:  %cd%\dist\
+echo Day la trinh CAI DAT that (nhu cac app khac): chay no se hoi cai vao dau,
+echo tao shortcut Desktop + Start Menu, cai xong tu mo app - khong con la file
+echo .exe roi chay truc tiep nua.
 echo App se TU DONG mo thang trackerdqrtbao.online, khong can nhap gi ca.
-echo Khi mo app, Windows se hoi "Cho phep ung dung nay thay doi tren thiet bi?" (UAC)
-echo - bam Yes. App can quyen nay de Auto Rejoin / Performance dieu khien duoc Roblox.
-echo Gui file .exe nay cho ai muon dung - ho chi can double-click la vao thang
+echo Khi cai / mo app, Windows se hoi "Cho phep ung dung nay thay doi tren thiet bi?"
+echo (UAC) - bam Yes. App can quyen nay de Auto Rejoin / Performance dieu khien duoc Roblox.
+echo Gui file Setup.exe nay cho ai muon dung - ho chi can chay va bam Install la vao thang
 echo tracker, dang nhap Discord nhu tren web, cua so rieng khong thanh dia chi.
 echo ^(Neu sau nay doi domain, mo app len vao menu "Server" o tren ^> "Doi server
 echo URL..." de sua.^)
