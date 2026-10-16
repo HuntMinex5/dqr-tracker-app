@@ -7959,6 +7959,20 @@ function lic(u){if(u.admin)return 'Admin';if(!u.license)return 'Chưa có';if(u.
 var S={users:[],licenses:[]},OPEN={};
 function load(){return api('/admin/api/state').then(function(j){S=j;render()}).catch(function(e){alert('Lỗi: '+e.message)})}
 function act(path,body,confirmMsg){api(path,body).then(load).catch(function(e){alert('Lỗi: '+e.message)})}
+function modalPrompt(msg,def){return new Promise(function(res){
+  var ov=document.createElement('div');ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:9999';
+  var bx=document.createElement('div');bx.style.cssText='background:var(--cd);border:1px solid var(--bd);border-radius:12px;padding:16px;min-width:280px';
+  var lb=document.createElement('div');lb.textContent=msg;lb.style.cssText='margin-bottom:8px;color:var(--tx)';
+  var inp=document.createElement('input');inp.value=def!=null?def:'';inp.style.cssText='width:100%;padding:8px;border-radius:8px;border:1px solid var(--bd);background:var(--bg);color:var(--tx);font:inherit;margin-bottom:10px';
+  var row=document.createElement('div');row.style.cssText='display:flex;gap:8px;justify-content:flex-end';
+  var ok=document.createElement('button');ok.type='button';ok.textContent='OK';ok.className='pri';
+  var ca=document.createElement('button');ca.type='button';ca.textContent='Huỷ';
+  function close(v){document.body.removeChild(ov);res(v)}
+  ok.onclick=function(){close(inp.value)};ca.onclick=function(){close(null)};
+  inp.onkeydown=function(e){if(e.key==='Enter'){e.preventDefault();close(inp.value)}if(e.key==='Escape')close(null)};
+  row.appendChild(ca);row.appendChild(ok);bx.appendChild(lb);bx.appendChild(inp);bx.appendChild(row);ov.appendChild(bx);document.body.appendChild(ov);
+  inp.focus();inp.select();
+})}
 function keyTerm(l){if(l.eff){if(l.eff.expiresAt===null)return 'Vĩnh viễn';var d=Math.ceil((l.eff.expiresAt-Date.now())/864e5);return d>0?'Còn '+d+' ngày':'Hết hạn'}return l.days?l.days+' ngày':'Vĩnh viễn'}
 function keyMax(l){return l.eff?(l.eff.maxAccounts||'∞'):(l.maxAccounts||'∞')}
 function stTag(l){return l.revoked?el('span',{class:'tag t-rev',text:'Thu hồi'}):l.usedBy?el('span',{class:'tag t-used',text:'Đã dùng: '+(l.usedByName||l.usedBy)}):el('span',{class:'tag t-free',text:'Chưa dùng'})}
@@ -7979,8 +7993,8 @@ function render(){
   S.users.forEach(function(u){
     var a=el('td',{class:'acts'});
     if(!u.admin){
-      a.appendChild(el('button',{type:'button',text:'+/- ngày',on:function(){var d=prompt('Cộng thêm bao nhiêu ngày? (số âm để trừ)','30');if(d===null)return;act('/admin/api/users',{id:u.id,action:'addDays',days:Number(d)})}}));
-      a.appendChild(el('button',{type:'button',text:'Max acc',on:function(){var d=prompt('Số acc tối đa (0 = không giới hạn):',(u.license&&u.license.maxAccounts)||'5');if(d===null)return;act('/admin/api/users',{id:u.id,action:'setMax',maxAccounts:Number(d)})}}));
+      a.appendChild(el('button',{type:'button',text:'+/- ngày',on:function(){modalPrompt('Cộng thêm bao nhiêu ngày? (số âm để trừ)','30').then(function(d){if(d===null||d==='')return;act('/admin/api/users',{id:u.id,action:'addDays',days:Number(d)})})}}));
+      a.appendChild(el('button',{type:'button',text:'Max acc',on:function(){modalPrompt('Số acc tối đa (0 = không giới hạn):',(u.license&&u.license.maxAccounts)||'5').then(function(d){if(d===null||d==='')return;act('/admin/api/users',{id:u.id,action:'setMax',maxAccounts:Number(d)})})}}));
       a.appendChild(el('button',{type:'button',text:'Vĩnh viễn',on:function(){act('/admin/api/users',{id:u.id,action:'setLifetime'},'Cấp quyền vĩnh viễn cho '+u.name+'?')}}));
       if(u.license)a.appendChild(el('button',{type:'button',class:'dg',text:'Xoá quyền',on:function(){act('/admin/api/users',{id:u.id,action:'clearLicense'},'Xoá quyền của '+u.name+'?')}}));
       a.appendChild(el('button',{type:'button',class:'dg',text:u.banned?'Mở khoá':'Khoá',on:function(){act('/admin/api/users',{id:u.id,action:u.banned?'unban':'ban'},(u.banned?'Mở khoá ':'Khoá ')+u.name+'?')}}));
@@ -8351,13 +8365,7 @@ a{display:block;padding:15px;border-radius:12px;background:#5865f2;color:#fff;te
   if (p.startsWith('/api/runs')) return runsApi(req, res, p, u, a);
   if (p.startsWith('/api/trade/')) return tradeApi(req, res, p, u, a, mine);
 
-  // ---- HWID: user (theo key da dung) bi gan voi 1 may o lan bao cao dau tien; admin reset o /admin ----
-  if (p === '/api/report' && req.method === 'POST' && a.via === 'token' && !a.admin && a.user) {
-    const hw = String(req.headers['x-hwid'] || '').trim().slice(0, 200), hh = hw ? sha('hwid:' + hw) : '';
-    if (a.user.hwid) {
-      if (!hh || !safeEq(hh, a.user.hwid)) return send(res, 403, { error: 'hwid_mismatch', message: 'Key đã gắn với thiết bị khác. Liên hệ admin để reset HWID.' });
-    } else if (hh) { a.user.hwid = hh; a.user.hwidAt = Date.now(); saveAuth(); }
-  }
+  // ---- HWID: DA BO GIOI HAN theo yeu cau nguoi dung (truoc day khoa 1 key = 1 may, gio khong chan nua) ----
   if (p === '/api/parties/lobby' && req.method === 'POST') {   // nut "Force lobby" (Config > Parties & Runs): bao script Lua cua tung account ve Lobby ngay
     return readJson(req, res, b => {
       const names = (Array.isArray(b.names) ? b.names : []).slice(0, 200);
