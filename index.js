@@ -161,7 +161,7 @@ async function loadOwner(o) {
 }
 let has = { licenses: false, sessions: false };
 async function loadState(req) {
-  owners = {}; dirty = false; authDirty = false; loadedOwners.clear(); trade = { owner: '', jobs: {}, loaded: false, hist: {}, histNew: {}, histDel: [] }; snap = { users: {}, licenses: {}, sessions: {}, acc: {}, trade: {} };
+  owners = {}; dirty = false; authDirty = false; loadedOwners.clear(); trade = { owner: '', jobs: {}, loaded: false, hist: {}, histNew: {}, histDel: [] }; snap = { users: {}, licenses: {}, sessions: {}, acc: {}, trade: {} }; sellStore.clear(); buyStore.clear();
   auth.users = {}; auth.licenses = {}; auth.sessions = {}; counts = {};
   const pth = String(req.url || '').split('?')[0];
   const needAll = pth === '/' || pth.startsWith('/admin') || pth.startsWith('/auth/') || pth === '/api/me' || pth === '/api/me/token' || pth === '/api/redeem';
@@ -182,7 +182,11 @@ async function loadState(req) {
   if (a && a.owner) {
     const lightTrade = pth === '/api/trade/poll' || pth === '/api/trade/wait' || pth === '/api/trade/status' || pth === '/api/trade/list' || pth === '/api/trade/history' || pth === '/api/trade/history/clear' || pth === '/api/trade/sell/status' || pth === '/api/trade/sell/list' || pth === '/api/trade/buy/status' || pth === '/api/trade/buy/list' || pth === '/api/trade/buy/clear';   // khong nap kho do -> nhe, goi thuong xuyen duoc
     if (!lightTrade) await loadOwner(a.owner);
-    if (lightTrade || pth.startsWith('/api/trade/') || pth === '/api/report' || pth === '/api/accounts') await loadTrade(a.owner, pth === '/api/trade/history' || pth === '/api/trade/history/clear');
+    if (lightTrade || pth.startsWith('/api/trade/') || pth === '/api/report' || pth === '/api/accounts') {
+      await loadTrade(a.owner, pth === '/api/trade/history' || pth === '/api/trade/history/clear');
+      await loadSellBox(a.owner); await loadBuyBox(a.owner);   // can cho CA /api/trade/wait + /api/trade/poll (tradeInfoFor -> sellFor/buyFor), khong chi /api/trade/sell|buy/*
+    }
+    if (pth === '/api/report' || pth.startsWith('/api/runs')) await loadRunsBox(a.owner);   // Total Run (thang/thua + thoi gian) - xem ghi chu o loadRunsBox
   }
 }
 function diffCmds(key, cur, old, cmds) {
@@ -213,6 +217,9 @@ async function saveState() {
   if (trade.loaded && trade.histDel && trade.histDel.length) cmds.push(['HDEL', 'dq:tradehist:' + trade.owner, ...trade.histDel]);
   if (trade.loaded && trade.goldDirty) cmds.push(['SET', 'dq:goldev:' + trade.owner, JSON.stringify(trade.goldEv || [])]);
   if (trade.loaded && trade.ver) cmds.push(['SET', 'dq:tradever:' + trade.owner, trade.ver]);   // bao cho cac acc dang cho: co lenh moi
+  for (const [o, b] of sellStore) if (b.loaded && b.dirty) { cmds.push(['SET', 'dq:sell:' + o, JSON.stringify(b.jobs)]); b.dirty = false; }
+  for (const [o, b] of buyStore) if (b.loaded && b.dirty) { cmds.push(['SET', 'dq:buy:' + o, JSON.stringify(b.jobs)]); b.dirty = false; }
+  for (const [o, b] of RUNS.boxes) if (b.loaded && b.dirty) { cmds.push(['SET', 'dq:runs:' + o, JSON.stringify(b.data)]); b.dirty = false; }
   if (cmds.length) await redis(cmds);
 }
 
@@ -2579,24 +2586,39 @@ const XP_KEY_ID = { xp1: 1, xp2: 2, xp3: 3 };
 const SELL_MAX_ITEMS = 500;          // toi da item / 1 lenh
 const SELL_TTL = 45e3;               // acc khong nhan / khong bao ket qua sau ngan nay -> het han
 const SELL_LOG_MAX = 1000;           // log ban do KHONG tu xoa theo thoi gian nua; chi xoa khi bam "Xoa log" (toi da ngan nay lenh gan nhat de tranh day bo nho)
+// sellStore/buyStore: TRUOC DAY chi giu trong RAM (bo nho tien trinh) - tren Vercel moi request co the roi vao
+// MAY CHU (serverless instance) KHAC NHAU, nen 1 lenh tao o may A co the "bien mat" khi web poll trung may B, roi
+// "tu nhien hien thanh cong" khi roi lai may A, hoac mat han khi may do bi Vercel thu hoi. Day la nguyen nhan that
+// cua loi "bam Ban ngay -> hien dang ban -> mat -> hien thanh cong -> tu dong xoa". Fix: luu qua Redis (dq:sell:<owner>
+// / dq:buy:<owner>, 1 key JSON cho ca box) - nap dau request lien quan, ghi lai cuoi request neu co thay doi (dirty).
 const sellStore = new Map();
-const buyStore = new Map();          // owner -> { jobs: [] } don gian: moi acc 1 lenh mua
-const buyBox = o => { let b = buyStore.get(o); if (!b) buyStore.set(o, b = { jobs: [] }); return b; };
+const buyStore = new Map();          // owner -> { jobs: [], loaded, dirty } don gian: moi acc 1 lenh mua
+const buyBox = o => { let b = buyStore.get(o); if (!b) buyStore.set(o, b = { jobs: [], loaded: false, dirty: false }); return b; };
+const sellBox = o => { let b = sellStore.get(o); if (!b) sellStore.set(o, b = { jobs: [], loaded: false, dirty: false }); return b; };
+async function loadBuyBox(o) {
+  if (buyBox(o).loaded) return;
+  let jobs = []; try { const [raw] = await redis([['GET', 'dq:buy:' + o]]); jobs = raw ? JSON.parse(raw) : []; } catch (e) { jobs = []; }
+  buyStore.set(o, { jobs, loaded: true, dirty: false });
+}
+async function loadSellBox(o) {
+  if (sellBox(o).loaded) return;
+  let jobs = []; try { const [raw] = await redis([['GET', 'dq:sell:' + o]]); jobs = raw ? JSON.parse(raw) : []; } catch (e) { jobs = []; }
+  sellStore.set(o, { jobs, loaded: true, dirty: false });
+}
 const BUY_TTL = 5e3;
 function buyExpire(b) {
   const now = Date.now();
   for (const j of b.jobs) if ((j.status === 'queued' || j.status === 'running') && now - (j.sentAt || j.createdAt) > BUY_TTL) {
-    j.status = 'expired'; j.msg = 'Chưa hoàn thành: acc không nhận lệnh trong 5s'; j.updatedAt = now;
+    j.status = 'expired'; j.msg = 'Chưa hoàn thành: acc không nhận lệnh trong 5s'; j.updatedAt = now; b.dirty = true;
   }
-  b.jobs = b.jobs.filter(j => now - j.createdAt < 10 * 6e4).slice(-200);
-}         // owner -> { jobs: [] }
-const sellBox = o => { let b = sellStore.get(o); if (!b) sellStore.set(o, b = { jobs: [] }); return b; };
+  const n0 = b.jobs.length; b.jobs = b.jobs.filter(j => now - j.createdAt < 10 * 6e4).slice(-200); if (b.jobs.length !== n0) b.dirty = true;
+}
 function sellExpire(b) {
   const now = Date.now();
   for (const j of b.jobs) if ((j.status === 'queued' || j.status === 'running') && now - j.createdAt > SELL_TTL) {
-    j.status = 'expired'; j.msg = 'Hết hạn: acc không nhận/không báo kết quả (script Lua có đang chạy không?)'; j.updatedAt = now;
+    j.status = 'expired'; j.msg = 'Hết hạn: acc không nhận/không báo kết quả (script Lua có đang chạy không?)'; j.updatedAt = now; b.dirty = true;
   }
-  b.jobs = b.jobs.slice(-SELL_LOG_MAX);
+  const n0 = b.jobs.length; b.jobs = b.jobs.slice(-SELL_LOG_MAX); if (b.jobs.length !== n0) b.dirty = true;
 }
 // Lua bao da ban nhung kho moi chua len (fresh=false) -> tu go item da ban khoi kho luu tren server, web khong con hien item cu.
 // Bao cao kho that cua acc (/api/report) se ghi de len ngay sau do.
@@ -2667,7 +2689,7 @@ function sellFor(name) {   // lenh ban dang cho acc nay (gui kem trong tradeInfo
   for (const j of b.jobs) {
     if (j.acc !== name) continue;
     if (j.status === 'queued' || (j.status === 'running' && !j.ack && now - (j.sentAt || 0) > 4000)) {   // chua xac nhan -> gui lai (Lua tu chong ban 2 lan theo id)
-      j.status = 'running'; j.sentAt = now; out.push({ id: j.id, items: j.items });
+      j.status = 'running'; j.sentAt = now; b.dirty = true; out.push({ id: j.id, items: j.items });
     }
   }
   return out;
@@ -2702,7 +2724,7 @@ function buyFor(name) {
   for (const j of box.jobs) {
     if (j.acc !== name) continue;
     if (j.status === 'queued' || (j.status === 'running' && !j.ack && now - (j.sentAt || 0) > 4000)) {
-      j.status = 'running'; j.sentAt = now;
+      j.status = 'running'; j.sentAt = now; box.dirty = true;
       out.push({ id: j.id, key: j.key });
     }
   }
@@ -2855,7 +2877,7 @@ function tradeApi(req, res, p, u, a, mine) {
       const jobVal = isXp ? { id: XP_KEY_ID[key], currency: currency } : key;
       const job = { id: now.toString(36) + rnd(3).replace(/[^A-Za-z0-9]/g, ''), acc, key: jobVal, keyName: key, status: 'queued', msg: '', createdAt: now, updatedAt: now, sentAt: 0, ack: false, seen: false };
       box.jobs = box.jobs.filter(j => !(j.acc === acc && j.status === 'queued' && j.keyName === key && (!isXp || (j.key && j.key.currency === currency))));
-      box.jobs.push(job); bumpTradeVer();
+      box.jobs.push(job); box.dirty = true; bumpTradeVer();
       return send(res, 200, { ok: true, id: job.id });
     }
     if (p === '/api/trade/buy/list') {
@@ -2878,7 +2900,7 @@ function tradeApi(req, res, p, u, a, mine) {
       if (!total) return send(res, 400, { error: 'no_items', message: 'Chưa chọn item nào.' });
       const box = sellBox(a.owner); sellExpire(box);
       const job = { id: now.toString(36) + rnd(3).replace(/[^A-Za-z0-9]/g, ''), acc, items, total, status: 'queued', msg: '', sold: 0, createdAt: now, updatedAt: now };
-      box.jobs.push(job); bumpTradeVer();   // danh thuc long-poll cua cac acc -> acc nay nhan lenh ngay
+      box.jobs.push(job); box.dirty = true; bumpTradeVer();   // danh thuc long-poll cua cac acc -> acc nay nhan lenh ngay
       // go item khoi kho luu tren server NGAY (web hien tuc thi, khong doi game bao cao). Game se gui kho THAT len ngay sau khi ban -> ghi de/khoi phuc neu ban that bai.
       sellPrune(mine, acc, items, total); job.pruned = true;
       return send(res, 200, { ok: true, id: job.id, total });
@@ -2890,7 +2912,7 @@ function tradeApi(req, res, p, u, a, mine) {
       const st = s(b.status, 12);
       if (st !== 'running' && st !== 'done' && st !== 'failed') return send(res, 400, { error: 'bad_status' });
       if (j.status === 'done' || j.status === 'failed' || j.status === 'expired') return send(res, 200, { ok: true });
-      j.ack = true; j.status = st; j.msg = s(b.msg, 200); j.updatedAt = Date.now();
+      j.ack = true; j.status = st; j.msg = s(b.msg, 200); j.updatedAt = Date.now(); box.dirty = true;
       bumpTradeVer();
       return send(res, 200, { ok: true, status: j.status });
     }
@@ -2901,7 +2923,7 @@ function tradeApi(req, res, p, u, a, mine) {
       const st = s(b.status, 12);
       if (st !== 'running' && st !== 'done' && st !== 'failed') return send(res, 400, { error: 'bad_status' });
       if (j.status === 'done' || j.status === 'failed') return send(res, 200, { ok: true });   // da xong -> bo qua bao cao tre
-      j.ack = true; j.status = st; j.msg = s(b.msg, 200); j.sold = clampInt(b.sold, 0, SELL_MAX_ITEMS, j.sold | 0); j.updatedAt = now;
+      j.ack = true; j.status = st; j.msg = s(b.msg, 200); j.sold = clampInt(b.sold, 0, SELL_MAX_ITEMS, j.sold | 0); j.updatedAt = now; box.dirty = true;
       if (st !== 'failed') { const ct = Object.prototype.hasOwnProperty.call(mine, j.acc) ? mine[j.acc] : null; if (ct && ct.soldTomb) { ct.soldTomb.until = Date.now() + SOLD_TOMB_MS; dirty = true; } }   // tinh 30s tu luc ban that, khong tu luc tao lenh
       if (st === 'done' && j.sold > 0 && !j.pruned && b.fresh !== true) sellPrune(mine, j.acc, j.items, j.sold);
       // ban that bai / chi ban 1 phan -> bo tombstone de kho that (Lua vua gui) khong bi an nham
@@ -2909,11 +2931,11 @@ function tradeApi(req, res, p, u, a, mine) {
       return send(res, 200, { ok: true });
     }
     if (p === '/api/trade/buy/clear') {   // xoa log cac lenh mua da ket thuc
-      const box = buyStore.get(a.owner); if (box) box.jobs = box.jobs.filter(j => j.status === 'queued' || j.status === 'running');
+      const box = buyStore.get(a.owner); if (box) { box.jobs = box.jobs.filter(j => j.status === 'queued' || j.status === 'running'); box.dirty = true; }
       return send(res, 200, { ok: true });
     }
     if (p === '/api/trade/sell/clear') {   // xoa log cac lenh da ket thuc
-      const box = sellBox(a.owner); box.jobs = box.jobs.filter(j => j.status === 'queued' || j.status === 'running');
+      const box = sellBox(a.owner); box.jobs = box.jobs.filter(j => j.status === 'queued' || j.status === 'running'); box.dirty = true;
       return send(res, 200, { ok: true });
     }
     // --- script Lua bao trang thai ---
@@ -4886,7 +4908,13 @@ var C=null,ST={items:[],log:[],counts:{rejoin:0,kicked:0,disconnect:0},mine:true
 var WHY={rejoin:['Captcha rejoin','#fbbf24'],disconnect:['Mất kết nối','#fbbf24'],kicked:['Bị kick','#f43f5e'],'harvard-stuck':['Harvard bị đứng - đang mở lại','#fbbf24'],run:['Đang chạy','#4ade80'],ingame:['Trong game, script chưa báo','#fbbf24'],out:['Không trong game','#f43f5e'],check:['Đang kiểm tra…','#8a919c'],idle:['Auto Rejoin đang tắt','#8a919c'],off:['Đã tạm tắt acc này','#8a919c']};
 var saveT=null;
 function syncOn(){onBox.checked=!!(C&&C.enabled);onLb.textContent=onBox.checked?'Đang bật':'Tắt';var tp=pane.querySelector('#rj_top');if(tp)tp.classList.toggle('on',onBox.checked)}
-function myKey(){try{return localStorage.getItem('dq_key')||''}catch(e){return ''}}   // key ca nhan dang dang nhap - tu gan vao cfg de Auto Rejoin (chay qua App Windows) tu goi ve server that lay dung trang thai bao cao, khong can nguoi dung tu dan
+var MY_KEY_CACHE=null;
+function myKey(){return MY_KEY_CACHE||''}   // key ca nhan dang dang nhap - tu gan vao cfg de Auto Rejoin (chay qua App Windows) tu goi ve server that lay dung trang thai bao cao, khong can nguoi dung tu dan
+function primeMyKey(){   // KEYV chi la bien JS duoc server "nuong" san vao trang luc render (khong nam trong localStorage) nen khong doc duoc tu day - phai tu goi /api/me (xac thuc bang cookie dang dang nhap, KHONG lam xoay token nhu /api/me/token) de lay dung token that
+  if(MY_KEY_CACHE!=null)return;
+  fetch('/api/me',{headers:{'x-requested-with':'dq'}}).then(function(r){return r.json()}).then(function(j){MY_KEY_CACHE=(j&&j.token)||''}).catch(function(){MY_KEY_CACHE=''})
+}
+primeMyKey();
 async function saveNow(){   // tự lưu mọi thay đổi (không có nút Save)
   if(!C)return;
   try{await api('/api/rejoin/config',{method:'POST',body:JSON.stringify(Object.assign({},C,{apiKey:myKey()}))});dirty=false;ST.mine=true;say('');return true}
@@ -5032,7 +5060,8 @@ function live(){
   var pre=el('div','rj-log');pre.textContent=ST.log.length?maskLog(ST.log.map(function(x){return new Date(x.t).toLocaleTimeString()+'  '+x.m}).join('\n')):'(chưa có)';logBox.appendChild(pre);pre.scrollTop=atEnd?pre.scrollHeight:pt;
 }
 async function poll(){
-  try{var j=await api('/api/rejoin/state');ST.items=j.items||[];ST.log=j.log||[];ST.counts=j.counts||ST.counts;ST.mine=j.mine!==false;if(!C){C=j.cfg;syncOn();build()}else live()}
+  try{var j=await api('/api/rejoin/state');ST.items=j.items||[];ST.log=j.log||[];ST.counts=j.counts||ST.counts;ST.mine=j.mine!==false;if(!C){C=j.cfg;syncOn();build()}else live();
+    var mk=myKey();if(mk&&C&&C.apiKey!==mk){C.apiKey=mk;saveNow()}}   // tu sua neu apiKey dang luu sai/thieu (kiem tra moi vong poll, khong chi lan dau - vi /api/me co the chua tra ve kip luc trang vua mo)
   catch(e){if(!C){root.textContent='';say('Không đọc được: '+e.message,'err')}}
 }
 document.addEventListener('click',function(e){if(e.target&&e.target.id==='ha')setTimeout(function(){if(C)live()},30)});
@@ -7015,7 +7044,18 @@ function monLine(l) {
     const rbx = (Array.isArray(j.rbx) ? j.rbx : (j.rbx ? [j.rbx] : [])).map(x => ({ pid: +x.pid, cpu: +x.cpu || 0, mb: +x.mb || 0, start: +x.start || 0, resp: x.resp !== false, ver: (/version-[0-9a-f]{8,32}/i.exec(String(x.path || '')) || [''])[0] }));
     const tot = MON.meta && MON.meta.memTotalMB || 0, num = v => (typeof v === 'number' && Number.isFinite(v)) ? v : null;
     const s = { t: Date.now(), cpu: num(j.cpu), mem: num(j.memFree) == null || !tot ? null : Math.max(0, tot - j.memFree), gpu: num(j.gpu), dk: num(j.dk), dr: num(j.dr), dw: num(j.dw), rx: num(j.rx), tx: num(j.tx), df: num(j.df), rc: Math.round(rbx.reduce((a, x) => a + x.cpu, 0) * 10) / 10, rm: rbx.reduce((a, x) => a + x.mb, 0), n: rbx.length };
-    { const prev = MON.lastT || s.t, dt = Math.min(5000, Math.max(0, s.t - prev)); MON.lastT = s.t; if (s.n > 0 && dt > 0) { const T = runsTime(); T.ms += dt; T.acc += dt * s.n; runsSave(); } }
+    // Day nhip thoi gian nay len server chinh de cong vao "Total Run Time" cua DUNG owner (MON chi chay duoc tren
+    // may user qua Local Agent - Vercel khong co quyen doc CPU/Roblox cua may nguoi dung nen khong tu dem duoc;
+    // truoc day ghi vao file rieng cua Local Agent nhung KHONG AI DOC lai - tab Total Run luon lay tu server chinh,
+    // nen thoi gian cu dung yen 0 dung nhu bao loi). Fire-and-forget, khong chan vong lap MON.
+    { const prev = MON.lastT || s.t, dt = Math.min(5000, Math.max(0, s.t - prev)); MON.lastT = s.t;
+      if (LOCAL_AGENT && s.n > 0 && dt > 0) {
+        try {
+          const cfg = rjCfg();
+          if (cfg.apiKey) fetch(LOCAL_AGENT_ORIGIN + '/api/runs/timeadd', { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': cfg.apiKey }, body: JSON.stringify({ dt, n: s.n }) }).catch(() => {});
+        } catch {}
+      }
+    }
     MON.hist.push(s); if (MON.hist.length > 1800) MON.hist.splice(0, MON.hist.length - 1800);
     MON.last = { t: s.t, rbx }; MON.err = String(j.e || '').slice(0, 200);
   } catch {}
@@ -7043,8 +7083,21 @@ function monEnsure() {
 }
 // ===== TOTAL RUN: so lan di tung dungeon, thang / thua (Northern Lands co them Rodin); anh nen lay tu wiki =====
 const RUNS_NAMES = ['Desert Temple', 'Winter Outpost', 'Pirate Island', "King's Castle", 'The Underworld', 'Samurai Palace', 'The Canals', 'Ghastly Harbor', 'Steampunk Sewers', 'Orbital Outpost', 'Volcanic Chambers', 'Aquatic Temple', 'Enchanted Forest', 'Northern Lands', 'Gilded Skies', 'Unknown'];   // doi chieu dung tu file game (u2 list trong DungeonReleases). Bo 'Boss Raid' theo yeu cau (khong hien the nay nua); luot nao bao dungeonName='Boss Raid' se roi vao 'Unknown' nhu cac dungeon la khong nhan dien duoc khac. 'Unknown': khong doan duoc dungeon (chua gan Party / map khong khop / script cu chua bao dungeonName) - van dem win/loss vao day thay vi bo qua
-const RUNS = { db: null, timer: null, img: new Map(), imgBusy: new Map(), live: {}, dbg: [] };
+const RUNS = { db: null, timer: null, img: new Map(), imgBusy: new Map(), live: {}, dbg: [], boxes: new Map() };
 function runsDbgPush(o) { RUNS.dbg.push(o); if (RUNS.dbg.length > 300) RUNS.dbg.splice(0, RUNS.dbg.length - 300); }
+// Thang/thua tung dungeon (runsEntry/runsTrack/runsConclude) TRUOC DAY nam chung trong 1 file tracker_runs.json
+// ghi bang fs.writeFileSync - tren Vercel dia chi doc duoc nhung KHONG ghi lau dai (serverless, moi lan goi co
+// the roi vao may chu khac nhau, file ghi bi mat khi instance bi thu hoi) nen Win/Loss luon ve lai 0. Fix giong
+// het sellStore/buyStore: chuyen qua Redis (dq:runs:<owner>, 1 key JSON/owner), nap dau request can, ghi lai cuoi
+// request neu co thay doi (dirty). "Total Run Time" (runsTime/MON, chi chay tren may user qua Local Agent, van
+// con duong ghi file cu) KHONG dung toi, giu nguyen.
+const runsBox = o => { let b = RUNS.boxes.get(o); if (!b) RUNS.boxes.set(o, b = { data: {}, loaded: false, dirty: false }); return b; };
+async function loadRunsBox(o) {
+  if (runsBox(o).loaded) return;
+  let data = {}; try { const [raw] = await redis([['GET', 'dq:runs:' + o]]); data = raw ? JSON.parse(raw) : {}; } catch (e) { data = {}; }
+  if (!data || typeof data !== 'object') data = {};
+  RUNS.boxes.set(o, { data, loaded: true, dirty: false });
+}
 const runsFile = () => path.join(path.dirname(DATA_FILE), 'data', 'tracker_runs.json');
 const runsImgDir = () => path.join(path.dirname(DATA_FILE), 'data', 'dungeon_img');
 const runsSlug = n => n.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
@@ -7071,8 +7124,8 @@ function runsSave() {
 process.on('exit', () => { try { if (RUNS.timer && RUNS.db) { const f = runsFile(); fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, JSON.stringify(RUNS.db)); } } catch {} });
 const runsName = v => { const x = String(v || '').trim().toLowerCase(); return RUNS_NAMES.find(n => n.toLowerCase() === x) || ''; };
 const runsInt = v => { const n = Math.floor(+v); return Number.isFinite(n) && n >= 0 && n <= 1e9 ? n : 0; };
-const runsTime = () => { const d = runsDb(); return d._time || (d._time = { ms: 0, acc: 0 }); };   // tong thoi gian co Roblox chay (ms) va tong gio cua tung client (ms)
-function runsEntry(owner, name, mk) { const d = runsDb(); let o = d[owner]; if (!o) { if (!mk) return null; o = d[owner] = {}; } let e = o[name]; if (!e && mk) e = o[name] = { w: 0, l: 0, rw: 0, rl: 0 }; return e || null; }
+const runsTime = owner => { const d = runsBox(owner).data; return d._time || (d._time = { ms: 0, acc: 0 }); };   // tong thoi gian co Roblox chay (ms) va tong gio cua tung client (ms) - rieng tung owner (xem /api/runs/timeadd)
+function runsEntry(owner, name, mk) { const b = runsBox(owner), d = b.data; let e = d[name]; if (!e && mk) { e = d[name] = { w: 0, l: 0, rw: 0, rl: 0 }; b.dirty = true; } return e || null; }
 
 // ===== CHONG DEM TRUNG KHI NHIEU ACCOUNT CUNG 1 PARTY (CUNG jobId) CUNG BAO CAO 1 LUOT CHUNG (dung trong runsConclude) =====
 // Nhieu account trong CUNG 1 party/CUNG 1 server Roblox (CUNG jobId) deu nhan tin hieu ket qua cho CUNG 1 lan
@@ -7137,8 +7190,8 @@ function runsTrack(owner, name, rec, now0) {
       const prevBb = st.bbStatus || null, curBb = rec.bonusBossStatus || null;
       if (prevBb === 'active' && curBb && curBb !== prevBb) {
         const e = runsEntry(owner, 'Northern Lands', true);
-        if (curBb === 'success') { e.rw++; runsSave(); if (process.env.RUNS_DEBUG) console.log('[runs-debug] Rodin win (doc lap hoan toan voi dungeon chinh)', owner, name); }
-        else if (/fail/i.test(curBb)) { e.rl++; runsSave(); if (process.env.RUNS_DEBUG) console.log('[runs-debug] Rodin loss (doc lap hoan toan voi dungeon chinh)', owner, name); }
+        if (curBb === 'success') { e.rw++; runsBox(owner).dirty = true; if (process.env.RUNS_DEBUG) console.log('[runs-debug] Rodin win (doc lap hoan toan voi dungeon chinh)', owner, name); }
+        else if (/fail/i.test(curBb)) { e.rl++; runsBox(owner).dirty = true; if (process.env.RUNS_DEBUG) console.log('[runs-debug] Rodin loss (doc lap hoan toan voi dungeon chinh)', owner, name); }
       }
       st.bbStatus = curBb;
     }
@@ -7207,7 +7260,7 @@ function runsConclude(owner, run, now) {   // ghi 1 luot da ket thuc vao bang th
   const e = runsEntry(owner, dn, true);
   runsDbgPush({ t: now, k: 'conclude', owner, dn, win: !!run.win });
   if (run.win) e.w++; else e.l++;
-  runsSave(); if (process.env.RUNS_DEBUG) console.log('[runs-debug] concluded', owner, dn, e);
+  runsBox(owner).dirty = true; if (process.env.RUNS_DEBUG) console.log('[runs-debug] concluded', owner, dn, e);
 }
 function runsTick() {   // goi dinh ky: don cac luot bi "dinh" do im lang qua lau (crash/mat ket noi - khong co tin hieu thang/thua/ve lobby ro rang) - BO QUA, khong cong vao dau (giong nguyen tac cu: khong chac la thua that nen khong tinh)
   const live = RUNS.live; if (!live) return; const now = Date.now();
@@ -7287,8 +7340,8 @@ async function runsImg(name, res) {
 function runsApi(req, res, p, u, a) {
   const owner = a.owner;
   if (p === '/api/runs' && req.method === 'GET') {
-    const o = runsDb()[owner] || {};
-    return send(res, 200, { dungeons: RUNS_NAMES.map(n => { const e = o[n] || {}; return { name: n, w: e.w || 0, l: e.l || 0, rw: e.rw || 0, rl: e.rl || 0 }; }), imgErr: RUNS.err, time: runsTime() });
+    const o = runsBox(owner).data;
+    return send(res, 200, { dungeons: RUNS_NAMES.map(n => { const e = o[n] || {}; return { name: n, w: e.w || 0, l: e.l || 0, rw: e.rw || 0, rl: e.rl || 0 }; }), imgErr: RUNS.err, time: runsTime(owner) });
   }
   if (p === '/api/runs/debug' && req.method === 'GET') {   // xem nhanh log Total Run (vao/ra dungeon, ten dungeon doc tu game, Rodin, tin hieu thang) - nut "Xem Debug Northern/Rodin" trong tab Total Run
     return send(res, 200, { events: RUNS.dbg.filter(x => x.owner === owner).slice(-150) });
@@ -7299,17 +7352,26 @@ function runsApi(req, res, p, u, a) {
     const name = runsName(b.dungeon); if (!name) return send(res, 400, { error: 'bad_dungeon', message: 'Ten dungeon khong co trong danh sach.' });
     const n = Math.max(1, Math.min(1000, runsInt(b.n) || 1)), e = runsEntry(owner, name, true), win = b.win === true || String(b.result || '').toLowerCase() === 'win';
     if (b.rodin === true && name === 'Northern Lands') { if (win) e.rw += n; else e.rl += n; } else { if (win) e.w += n; else e.l += n; }
-    runsSave(); send(res, 200, { ok: true });
+    runsBox(owner).dirty = true; send(res, 200, { ok: true });
   });
   if (p === '/api/runs/set') return readJson(req, res, b => {   // sua tay
     const name = runsName(b.dungeon); if (!name) return send(res, 400, { error: 'bad_dungeon' });
     const e = runsEntry(owner, name, true);
     for (const k of ['w', 'l', 'rw', 'rl']) if (k in b) e[k] = runsInt(b[k]);
-    runsSave(); send(res, 200, { ok: true });
+    runsBox(owner).dirty = true; send(res, 200, { ok: true });
   });
   if (p === '/api/runs/reset') return readJson(req, res, b => {
-    const d = runsDb(); if (b.dungeon) { const name = runsName(b.dungeon); if (!name) return send(res, 400, { error: 'bad_dungeon' }); if (d[owner]) delete d[owner][name]; } else { delete d[owner]; delete d._time; }
-    runsSave(); send(res, 200, { ok: true });
+    const box = runsBox(owner), d = box.data;
+    if (b.dungeon) { const name = runsName(b.dungeon); if (!name) return send(res, 400, { error: 'bad_dungeon' }); delete d[name]; }
+    else { for (const k of Object.keys(d)) delete d[k]; }
+    box.dirty = true; send(res, 200, { ok: true });
+  });
+  // App Windows (Local Agent) day len tung nhip thoi gian Roblox dang chay thuc te (MON chi chay duoc tren may
+  // user, khong chay tren Vercel) de cong vao "Total Run Time" cua DUNG owner - xem monLine()/rjCfg().apiKey.
+  if (p === '/api/runs/timeadd') return readJson(req, res, b => {
+    const dt = Math.max(0, Math.min(5000, runsInt(b.dt))), n = Math.max(0, Math.min(200, runsInt(b.n)));
+    if (dt > 0 && n > 0) { const T = runsTime(owner); T.ms += dt; T.acc += dt * n; runsBox(owner).dirty = true; }
+    send(res, 200, { ok: true });
   });
   return send(res, 404, { error: 'not_found' });
 }
@@ -7725,7 +7787,7 @@ function render(me){
   panel.appendChild(el('div',{class:'dlcard'},[
     el('span',{class:'dlic',text:'⬇'}),
     el('span',{class:'dltxt'},[el('div',{class:'dltitle',text:'DQR Tracker for Windows'}),el('div',{class:'dlsub',text:'Cho mọi máy tính và VPS bạn chạy'})]),
-    el('a',{class:'dlbtn',href:'https://github.com/HuntMinex5/dqr-tracker-app/releases/latest/download/DQR.Tracker.1.0.0.exe',text:'Tải xuống'})]));
+    el('a',{class:'dlbtn',href:'https://github.com/HuntMinex5/dqr-tracker-app/releases/latest/download/DQR-Tracker-Setup.exe',text:'Tải xuống'})]));
 
   var bottom=[];
   if(me.admin)bottom.push(el('a',{href:'/admin',text:'DEV Key'}));
