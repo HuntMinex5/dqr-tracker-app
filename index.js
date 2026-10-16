@@ -161,7 +161,7 @@ async function loadOwner(o) {
 }
 let has = { licenses: false, sessions: false };
 async function loadState(req) {
-  owners = {}; dirty = false; authDirty = false; loadedOwners.clear(); trade = { owner: '', jobs: {}, loaded: false, hist: {}, histNew: {}, histDel: [] }; snap = { users: {}, licenses: {}, sessions: {}, acc: {}, trade: {} }; sellStore.clear(); buyStore.clear();
+  owners = {}; dirty = false; authDirty = false; loadedOwners.clear(); trade = { owner: '', jobs: {}, loaded: false, hist: {}, histNew: {}, histDel: [] }; snap = { users: {}, licenses: {}, sessions: {}, acc: {}, trade: {} }; sellStore.clear(); buyStore.clear(); RUNS.boxes.clear();
   auth.users = {}; auth.licenses = {}; auth.sessions = {}; counts = {};
   const pth = String(req.url || '').split('?')[0];
   const needAll = pth === '/' || pth.startsWith('/admin') || pth.startsWith('/auth/') || pth === '/api/me' || pth === '/api/me/token' || pth === '/api/redeem';
