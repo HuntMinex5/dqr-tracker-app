@@ -7250,9 +7250,10 @@ async function runsTrack(owner, name, rec, now0) {
   if (rec.dungeonStarted === true) st.realStart = true;
   if (!st.realStart) return;
 
-  // THANG: kill boss (dungeonFinished=true hoac dungeonProgress=="bossKilled") -> chot THANG NGAY, khong doi.
-  if (rec.dungeonFinished === true || rec.dungeonProgress === 'bossKilled') {
-    if (process.env.RUNS_DEBUG) console.log('[runs-debug] thang (kill boss)', { owner, name });
+  // THANG: dungeonFinished=true -> chot THANG NGAY, khong doi. (Bo tin hieu dungeonProgress=="bossKilled" theo
+  // yeu cau nguoi dung - "bossKilled" co the trung voi luc ha Rodin, de bi nham thanh thang dungeon chinh.)
+  if (rec.dungeonFinished === true) {
+    if (process.env.RUNS_DEBUG) console.log('[runs-debug] thang (dungeonFinished)', { owner, name });
     await runsConclude(owner, { dungeon: st.dungeon, jobId: st.jobId, win: true }, now0);
     st.active = false; st.realStart = false;
     return;
