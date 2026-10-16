@@ -7983,7 +7983,6 @@ function render(){
     if(q&&(l.key+' '+(l.note||'')+' '+(l.usedByName||'')).toLowerCase().indexOf(q)<0)return;shown++;
     var a=el('td',{class:'acts'});
     a.appendChild(el('button',{type:'button',text:'Copy',on:function(){navigator.clipboard&&navigator.clipboard.writeText(l.key)}}));
-    if(l.usedBy&&l.hwid)a.appendChild(el('button',{type:'button',text:'Reset HWID',on:function(){act('/admin/api/keys/resethwid',{key:l.key},'Reset HWID của key này? Người dùng sẽ gắn lại được với thiết bị mới.')}}));
     if(!l.revoked)a.appendChild(el('button',{type:'button',class:'dg',text:'Thu hồi',on:function(){act('/admin/api/keys/revoke',{key:l.key},'Thu hồi key này'+(l.usedBy?' (người dùng sẽ mất quyền ngay)':'')+'?')}}));
     if(!l.usedBy||l.revoked)a.appendChild(el('button',{type:'button',class:'dg',text:'Xoá',on:function(){act('/admin/api/keys/delete',{key:l.key},'Xoá hẳn key này?')}}));
     kb.appendChild(el('tr',{},[el('td',{class:'k',text:l.key}),el('td',{text:keyTerm(l)}),el('td',{text:keyMax(l)}),el('td',{text:l.note||''}),el('td',{},[stTag(l)]),el('td',{class:'k',title:l.hwidAt?fmt(l.hwidAt):'',text:l.usedBy?(l.hwid||'Chưa gắn'):'-'}),el('td',{text:fmt(l.createdAt)}),a]));
