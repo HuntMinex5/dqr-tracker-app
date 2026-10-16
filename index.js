@@ -7204,9 +7204,18 @@ async function runsTrack(owner, name, rec, now0) {
     if (st.bbJobId !== jobId) { st.bbJobId = jobId; st.bbActive = false; }
     const bbNow = rec.bonusBossStatus === 'active';
     if (bbNow) {
+      if (!st.bbActive) { st.bbRealStart = false; if (process.env.RUNS_DEBUG) console.log('[runs-debug] bat dau vao Rodin, cho dungeonProgress ve sach truoc khi tin tin hieu', { owner, name }); }
+      // dungeonProgress la bien DUNG CHUNG voi trum chinh - vua ha trum chinh xong gia tri "bossKilled" cu co the
+      // con sot lai 1-2 nhip truoc khi game xoa, roi moi vao man Rodin -> neu tin ngay se bi tinh nham thang Rodin
+      // cho luot chua lam gi ca (dung y chang loi "Replay bi an theo ket qua cu" o trum chinh). Phai thay
+      // dungeonProgress DA VE SACH (khong con la bossKilled/noLivesLeft/outOfTime) it nhat 1 lan sau khi vao Rodin,
+      // moi bat dau tin tin hieu thang/thua tiep theo cho LAN RODIN NAY.
+      if (!['bossKilled', 'noLivesLeft', 'outOfTime'].includes(rec.dungeonProgress)) st.bbRealStart = true;
       let rWin = null;
-      if (rec.dungeonProgress === 'bossKilled') rWin = true;   // kill boss Rodin = thang
-      else if (rec.timeUp === true || rec.dungeonProgress === 'noLivesLeft' || rec.dungeonProgress === 'outOfTime') rWin = false;   // het gio/het mang = thua
+      if (st.bbRealStart) {
+        if (rec.dungeonProgress === 'bossKilled') rWin = true;   // kill boss Rodin = thang
+        else if (rec.timeUp === true || rec.dungeonProgress === 'noLivesLeft' || rec.dungeonProgress === 'outOfTime') rWin = false;   // het gio/het mang = thua
+      }
       if (rWin !== null && !st.bbDone) {
         st.bbDone = true;   // chi chot 1 lan cho moi lan vao Rodin (bonusBossStatus ve active lai = lan Rodin moi, xem nhanh o duoi)
         const rKind = 'rodin\u0001' + (rWin ? 'win' : 'loss');
@@ -7222,7 +7231,7 @@ async function runsTrack(owner, name, rec, now0) {
       st.bbActive = true;
     } else {
       if (st.bbActive) st.bbDone = false;   // vua roi khoi trang thai "active" (het 1 lan Rodin) -> mo khoa, san sang chot cho lan Rodin KE TIEP
-      st.bbActive = false;
+      st.bbActive = false; st.bbRealStart = false;
     }
   }
 
