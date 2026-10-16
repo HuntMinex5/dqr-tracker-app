@@ -7196,30 +7196,33 @@ async function runsTrack(owner, name, rec, now0) {
   const jobId = rec.jobId || null;
   if (process.env.RUNS_DEBUG) console.log('[runs-debug] track', { owner, name, placeId: rec.placeId, inDungeon, liveDungeon, jobId, dungeonProgress: rec.dungeonProgress, dungeonFinished: rec.dungeonFinished, dungeonStarted: rec.dungeonStarted, timeUp: rec.timeUp, bonusBossStatus: rec.bonusBossStatus });
 
-  // ===== RAID RODIN (bonusBossStatus): HOAN TOAN TACH RIENG khoi thang/thua dungeon chinh, dung dung cach Harvard
-  // lam (xem statisticsWebhooks trong source goc: rodinClear/rodinFail KHONG BAO GIO goi sessMark - ham dung de
-  // cong thang/thua chinh - ma chi cong rieng vao webhooks.rodinClears/rodinFails). O day cung vay: Raid Rodin w/l
-  // duoc cong NGAY khi phat hien bonusBossStatus chuyen tu "active" sang "success"/chua "fail", BAT KE luot dungeon
-  // chinh (Northern Lands) cuoi cung thang hay thua - day la diem khac biet chinh so voi co che cu (truoc day Rodin
-  // bi dinh theo ket qua cua dungeon chinh, dan den 1 luot thang dungeon nhung thua Rodin bi tinh nham thanh Rodin win).
+  // ===== RAID RODIN: TACH RIENG HOAN TOAN, KHONG LIEN QUAN GI den thang/thua dungeon chinh. Theo yeu cau nguoi
+  // dung: dung CUNG KIEU tin hieu nhu dungeon thuong (kill boss = thang, het gio/het mang = thua), nhung CHI ap
+  // dung trong luc dang danh Rodin (bonusBossStatus === "active") - khong dung tin hieu success/fail cua
+  // bonusBossStatus nua (hay bi bao tre/thieu, lam dem thieu luot Rodin).
   if (jobId) {
-    if (st.bbJobId !== jobId) { st.bbJobId = jobId; st.bbStatus = rec.bonusBossStatus || null; }
-    else {
-      const prevBb = st.bbStatus || null, curBb = rec.bonusBossStatus || null;
-      if (prevBb === 'active' && curBb && curBb !== prevBb) {
-        const rWin = curBb === 'success', rKind = 'rodin\u0001' + (rWin ? 'win' : 'loss');
-        if (rWin || /fail/i.test(curBb)) {
-          if (await runsJobMarkClaim(owner, jobId, rKind)) {   // chong dem trung Rodin qua nhieu may chu Vercel, giong het dungeon chinh (xem runsJobMarkClaim)
-            const e = runsEntry(owner, 'Northern Lands', true);
-            if (rWin) { e.rw++; runsBox(owner).dirty = true; if (process.env.RUNS_DEBUG) console.log('[runs-debug] Rodin win (doc lap hoan toan voi dungeon chinh)', owner, name); }
-            else { e.rl++; runsBox(owner).dirty = true; if (process.env.RUNS_DEBUG) console.log('[runs-debug] Rodin loss (doc lap hoan toan voi dungeon chinh)', owner, name); }
-            runsDbgPush({ t: now0, k: 'conclude', owner, dn: 'Raid Rodin', win: rWin });   // CHI them log de xem o /api/runs/debug, KHONG doi cach dem
-          } else {
-            runsDbgPush({ t: now0, k: 'discard', owner, run: { dungeon: 'Raid Rodin', win: rWin, partyDedup: true } });   // CHI them log, KHONG doi cach dem
-          }
+    if (st.bbJobId !== jobId) { st.bbJobId = jobId; st.bbActive = false; }
+    const bbNow = rec.bonusBossStatus === 'active';
+    if (bbNow) {
+      let rWin = null;
+      if (rec.dungeonProgress === 'bossKilled') rWin = true;   // kill boss Rodin = thang
+      else if (rec.timeUp === true || rec.dungeonProgress === 'noLivesLeft' || rec.dungeonProgress === 'outOfTime') rWin = false;   // het gio/het mang = thua
+      if (rWin !== null && !st.bbDone) {
+        st.bbDone = true;   // chi chot 1 lan cho moi lan vao Rodin (bonusBossStatus ve active lai = lan Rodin moi, xem nhanh o duoi)
+        const rKind = 'rodin\u0001' + (rWin ? 'win' : 'loss');
+        if (await runsJobMarkClaim(owner, jobId, rKind)) {   // chong dem trung Rodin qua nhieu may chu Vercel, giong het dungeon chinh (xem runsJobMarkClaim)
+          const e = runsEntry(owner, 'Northern Lands', true);
+          if (rWin) { e.rw++; runsBox(owner).dirty = true; if (process.env.RUNS_DEBUG) console.log('[runs-debug] Rodin win (kill boss, doc lap hoan toan voi dungeon chinh)', owner, name); }
+          else { e.rl++; runsBox(owner).dirty = true; if (process.env.RUNS_DEBUG) console.log('[runs-debug] Rodin loss (het gio/het mang, doc lap hoan toan voi dungeon chinh)', owner, name); }
+          runsDbgPush({ t: now0, k: 'conclude', owner, dn: 'Raid Rodin', win: rWin });   // chi them log de xem o /api/runs/debug
+        } else {
+          runsDbgPush({ t: now0, k: 'discard', owner, run: { dungeon: 'Raid Rodin', win: rWin, partyDedup: true } });
         }
       }
-      st.bbStatus = curBb;
+      st.bbActive = true;
+    } else {
+      if (st.bbActive) st.bbDone = false;   // vua roi khoi trang thai "active" (het 1 lan Rodin) -> mo khoa, san sang chot cho lan Rodin KE TIEP
+      st.bbActive = false;
     }
   }
 
