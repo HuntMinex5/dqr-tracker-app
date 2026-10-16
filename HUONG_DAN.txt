@@ -1,0 +1,61 @@
+HUONG DAN: APP WINDOWS RIENG (WEB TREN VERCEL + DIEU KHIEN MAY TAI CHO)
+==================================================================================
+
+Y TUONG: app nay = 1 cua so rieng mo thang trang web tracker that cua ban
+(https://trackerdqrtbao.online, dang chay tren Vercel). Du lieu, tai khoan Discord,
+danh sach account... deu dung CHUNG voi ban web binh thuong, khong tach rieng.
+
+THEM: app nay cong chay NGAM 1 "local agent" nho ngay tren may dang mo app - day la
+BAN SAO cua chinh index.js (KHONG sua gi, KHONG lam roi), nhung chi bat o che do rieng
+de lam ĐUNG 3 viec ma 1 server tren mang (Vercel) khong bao gio lam duoc vi no can
+DIEU KHIEN TRUC TIEP MAY TINH dang mo app:
+  - Auto Rejoin   : tu mo lai Roblox khi bi kick / mat ket noi / vang game
+  - Performance   : gioi han CPU, don RAM, sap xep cua so cac client Roblox
+  - Config        : doc/ghi file config Harvard Labs ngay tren may
+3 chuc nang nay BAT BUOC phai mo bang APP NAY (khong dung duoc qua trinh duyet thuong,
+vi trinh duyet khong co quyen dieu khien Roblox tren may). Cac chuc nang con lai (Trade,
+Cookie, Inventory, Total Run...) dung binh thuong tren ca web lan app, khong khac gi.
+
+Local agent nay CHI nghe tren chinh may dang mo app (127.0.0.1), CHI tra loi cho dung
+trang trackerdqrtbao.online, KHONG dung Redis/Discord, KHONG gui du lieu gi ra ngoai -
+no chi nhan lenh ("mo Roblox", "gioi han CPU"...) tu chinh trang web dang mo trong app
+va thuc hien ngay tren may do.
+
+================================================================================
+CACH BUILD
+================================================================================
+1. Copy file "index.js" (ban moi nhat cua server) vao CHUNG thu muc voi build.bat nay
+   (thu muc desktop-client). Bat buoc phai co file nay thi Auto Rejoin/Performance/
+   Config moi hoat dong - thieu thi app van mo duoc nhung 3 cai do se bao loi.
+2. Double-click file "build.bat" (lan dau can internet de tai Electron).
+3. Xong se co file app trong "dist\" (dang "DQR Tracker <phien ban>.exe").
+4. Gui file .exe nay cho nguoi muon dung - ho KHONG can cai gi them, KHONG can co
+   file index.js, double-click la chay duoc ngay (index.js da duoc dong goi san
+   ben trong app roi).
+
+================================================================================
+CACH DUNG
+================================================================================
+1. Double-click file .exe trong dist\ - Windows se hoi "Cho phep ung dung nay thay
+   doi tren thiet bi nay?" (UAC) - bam Yes. App can quyen Admin nay de Performance/
+   Auto Rejoin dieu khien duoc cua so va tien trinh Roblox.
+2. App mo len la VAO THANG trang trackerdqrtbao.online, khong hoi gi them.
+3. Dang nhap Discord NGAY TRONG cua so app nay 1 LAN - vi app va trinh duyet la
+   2 "noi luu dang nhap" khac nhau, nen can dang nhap rieng trong app 1 lan dau,
+   sau do no nho (giu dang nhap) nhu binh thuong.
+4. Vao tab Auto Rejoin / Performance / Config - dung binh thuong, lenh se chay
+   ngay tren may dang mo app (khong qua mang).
+5. Neu sau nay doi domain khac: vao menu "Server" (goc tren trai cua so app) ->
+   "Đổi server URL..." de sua.
+
+================================================================================
+LUU Y
+================================================================================
+- App nay CAN Internet de mo trang web (Trade/Cookie/dang nhap... van qua Vercel
+  nhu binh thuong) - chi rieng Auto Rejoin/Performance/Config la chay ngay tai cho,
+  khong can mang cho PHAN DO.
+- Mo bang TRINH DUYET THUONG (Chrome/Edge vao thang trackerdqrtbao.online) van dung
+  duoc moi thu KHAC, nhung rieng Auto Rejoin/Performance/Config se bao "chi dung duoc
+  tu App Windows" - dung thiet ke, khong phai loi.
+- Neu mo 2 app cung luc tren 1 may, local agent chi app mo DAU TIEN chay duoc (dung
+  chung 1 cong 38245) - app mo sau van dung web binh thuong, chi 3 tab kia bao loi.

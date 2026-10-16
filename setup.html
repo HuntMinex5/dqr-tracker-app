@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<title>DQR Tracker</title>
+<style>
+  html,body{height:100%;margin:0;background:#0a0a0a;color:#eee;font-family:Segoe UI,Arial,sans-serif;display:flex;align-items:center;justify-content:center}
+  .box{width:380px;padding:28px;border:1px solid #333;border-radius:10px;background:#111}
+  h1{font-size:19px;margin:0 0 6px;color:#fff;letter-spacing:.3px}
+  p{font-size:13px;color:#999;margin:0 0 18px;line-height:1.5}
+  input{width:100%;box-sizing:border-box;padding:10px 12px;border-radius:6px;border:1px solid #444;background:#1a1a1a;color:#fff;font-size:14px;margin-bottom:12px;outline:none}
+  input:focus{border-color:#c0392b}
+  button{width:100%;padding:10px;border-radius:6px;border:1px solid #777;background:#2b2b2e;color:#fff;font-size:14px;cursor:pointer}
+  button:hover{background:#3a3a3e}
+  .err{color:#ff6b6b;font-size:12px;margin-top:8px;min-height:16px}
+</style>
+</head>
+<body>
+  <div class="box">
+    <h1>DQR Tracker</h1>
+    <p>Nhập địa chỉ web của tracker (domain bạn đã trỏ về server nhà), ví dụ:<br><b>https://tendomain-cua-ban.com</b></p>
+    <input id="url" placeholder="https://tendomain-cua-ban.com" autofocus>
+    <button id="go">Mở</button>
+    <div class="err" id="err"></div>
+  </div>
+  <script>
+    const $url = document.getElementById('url'), $go = document.getElementById('go'), $err = document.getElementById('err');
+    async function go() {
+      $err.textContent = '';
+      const r = await window.electronAPI.saveUrl($url.value);
+      if (!r.ok) $err.textContent = r.error || 'Có lỗi, thử lại.';
+    }
+    $go.onclick = go;
+    $url.addEventListener('keydown', e => { if (e.key === 'Enter') go(); });
+  </script>
+</body>
+</html>

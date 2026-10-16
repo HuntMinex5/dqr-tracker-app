@@ -1,0 +1,31 @@
+{
+  "name": "dqr-tracker-client",
+  "version": "1.0.0",
+  "private": true,
+  "description": "DQR Tracker - app Windows rieng, mo giao dien tu server that (khong nhung server ben trong)",
+  "main": "main.js",
+  "scripts": {
+    "build": "electron-builder --win portable"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.dqrtracker.client",
+    "productName": "DQR Tracker",
+    "asar": false,
+    "files": [
+      "main.js",
+      "preload.js",
+      "setup.html",
+      "icon.ico",
+      "app/**/*"
+    ],
+    "win": {
+      "target": "portable",
+      "icon": "icon.ico",
+      "requestedExecutionLevel": "requireAdministrator"
+    }
+  }
+}
