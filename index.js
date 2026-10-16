@@ -105,8 +105,18 @@ function redisLocal(cmds) {
     if (op === 'HGET') { const h = localDb.h[key]; return h && f0(h, c[2]) ? h[c[2]] : null; }
     if (op === 'HSET') { const h = localDb.h[key] || (localDb.h[key] = Object.create(null)); let n = 0; for (let i = 2; i + 1 < c.length; i += 2) { if (!(c[i] in h)) n++; h[c[i]] = String(c[i + 1]); } changed = true; return n; }
     if (op === 'HDEL') { const h = localDb.h[key]; let n = 0; if (h) for (let i = 2; i < c.length; i++) if (c[i] in h) { delete h[c[i]]; n++; } if (h && !Object.keys(h).length) delete localDb.h[key]; changed = true; return n; }
-    if (op === 'GET') return key in localDb.k ? localDb.k[key] : null;
-    if (op === 'SET') { localDb.k[key] = String(c[2]); changed = true; return 'OK'; }
+    if (op === 'GET') {
+      if (localDb.exp && localDb.exp[key] && Date.now() > localDb.exp[key]) { delete localDb.k[key]; delete localDb.exp[key]; return null; }
+      return key in localDb.k ? localDb.k[key] : null;
+    }
+    if (op === 'SET') {   // ho tro them NX/PX (dung cho runsJobMarkClaim - chong dem trung Total Run qua nhieu may chu)
+      let nx = false, px = null;
+      for (let i = 3; i < c.length; i++) { const t = String(c[i]).toUpperCase(); if (t === 'NX') nx = true; else if (t === 'PX' && c[i + 1] != null) { px = +c[i + 1]; i++; } }
+      if (nx) { const exp = localDb.exp && localDb.exp[key]; const live = key in localDb.k && !(exp && Date.now() > exp); if (live) return null; }
+      localDb.k[key] = String(c[2]);
+      if (px) { (localDb.exp || (localDb.exp = {}))[key] = Date.now() + px; } else if (localDb.exp) delete localDb.exp[key];
+      changed = true; return 'OK';
+    }
     throw new Error('redis local: chua ho tro lenh ' + op);
   });
   if (changed) localSave();
@@ -7132,16 +7142,18 @@ function runsEntry(owner, name, mk) { const b = runsBox(owner), d = b.data; let 
 // thang/thua chung (game thuong gui rieng cho tung thanh vien party), neu cong het thi se bi CONG TRUNG nhieu lan
 // cho dung 1 lan thang/thua that. Co che nay dam bao: voi CUNG 1 (owner, jobId, loai ket qua), chi acc nao "chot"
 // TRUOC moi duoc cong diem - acc khac trong CUNG party bao cao SAU cho CUNG jobId + loai ket qua do se bi bo qua.
-const RUNS_JOB_MARK_TTL_MS = 60 * 60 * 1000;   // don rac mark qua cu (jobId Roblox la GUID, thuc te khong bao gio lap lai - chi de phong RAM phinh neu server chay rat lau)
-function runsJobMarkClaim(owner, jobId, kind) {   // tra ve true neu DAY LA LAN DAU claim duoc (duoc cong diem); false neu acc khac trong party da claim roi (bo qua, tranh dem trung)
-  if (!jobId) return true;   // khong co jobId (hiem, du lieu cu/thieu) thi khong du de dedup theo party - cho qua nhu truoc gio, khong chan
-  const marks = RUNS.jobMarks || (RUNS.jobMarks = new Map());
-  const key = owner + '\u0001' + jobId + '\u0001' + kind;
-  const now = Date.now();
-  if (marks.size > 4000) for (const [k, at] of marks) if (now - at > RUNS_JOB_MARK_TTL_MS) marks.delete(k);
-  if (marks.has(key)) return false;
-  marks.set(key, now);
-  return true;
+const RUNS_JOB_MARK_TTL_MS = 60 * 60 * 1000;   // don rac mark qua cu (jobId Roblox la GUID, thuc te khong bao gio lap lai - chi de phong phinh neu server chay rat lau)
+// TRUOC DAY: Map trong RAM (trong 1 tien trinh). Tren Vercel moi request co the roi vao 1 may chu (serverless
+// instance) KHAC NHAU - moi may co RAM rieng, khong thay duoc mark cua may khac - nen 1 luot thang/thua THAT co
+// the bi NHIEU may chu khac nhau DOC LAP chot cung 1 luot do (vi co che grace 20s o rjTrack cung chi "nho" trong
+// RAM cua tung may) -> 1 luot thuc te bi dem thanh 2-3-4 luot. Day la nguyen nhan "dang ngoi canh, moi di 3 luot
+// ma no nhay len 13". Fix: chuyen qua Redis SET...NX (chi 1 may duoc "chot" dau tien cho 1 jobId+loai ket qua,
+// moi noi khac deu thay la da co -> tu dong bo qua), dam bao dung 1 lan du request roi vao may chu nao.
+async function runsJobMarkClaim(owner, jobId, kind) {   // tra ve true neu DAY LA LAN DAU claim duoc (duoc cong diem); false neu da co noi khac claim roi (bo qua, tranh dem trung)
+  if (!jobId) return true;   // khong co jobId (hiem, du lieu cu/thieu) thi khong du de dedup - cho qua nhu truoc gio, khong chan
+  const key = 'dq:runsmark:' + owner + '\u0001' + jobId + '\u0001' + kind;
+  try { const [r] = await redis([['SET', key, '1', 'NX', 'PX', String(RUNS_JOB_MARK_TTL_MS)]]); return r === 'OK'; }
+  catch (e) { return true; }   // loi mang luc check: tha qua (thieu 1 vai luot con hon la bi ket treo khong dem duoc gi)
 }
 
 // ===== TU DONG DEM WIN/LOSS: suy ra tu placeId (vao/ra dungeon) + tin hieu thang (cloneRewardGui, da co san o applyWin) =====
@@ -7164,7 +7176,7 @@ function runsDungeonFor(owner, name) {   // doan dungeon dang chay tu altfarm.js
   } catch {}
   return '';
 }
-function runsTrack(owner, name, rec, now0) {
+async function runsTrack(owner, name, rec, now0) {
   if (!owner || !rec) return;
   // QUAN TRONG: trang thai luot dang chay phai rieng theo TUNG ACC (owner+name), khong duoc dung chung 1 object cho
   // ca owner - neu dung chung, acc nay vua thoat/thang se lam "dinh" sang acc khac dang o dungeon KHAC (hoac vao
@@ -7189,9 +7201,14 @@ function runsTrack(owner, name, rec, now0) {
     else {
       const prevBb = st.bbStatus || null, curBb = rec.bonusBossStatus || null;
       if (prevBb === 'active' && curBb && curBb !== prevBb) {
-        const e = runsEntry(owner, 'Northern Lands', true);
-        if (curBb === 'success') { e.rw++; runsBox(owner).dirty = true; if (process.env.RUNS_DEBUG) console.log('[runs-debug] Rodin win (doc lap hoan toan voi dungeon chinh)', owner, name); }
-        else if (/fail/i.test(curBb)) { e.rl++; runsBox(owner).dirty = true; if (process.env.RUNS_DEBUG) console.log('[runs-debug] Rodin loss (doc lap hoan toan voi dungeon chinh)', owner, name); }
+        const rWin = curBb === 'success', rKind = 'rodin\u0001' + (rWin ? 'win' : 'loss');
+        if (rWin || /fail/i.test(curBb)) {
+          if (await runsJobMarkClaim(owner, jobId, rKind)) {   // chong dem trung Rodin qua nhieu may chu Vercel, giong het dungeon chinh (xem runsJobMarkClaim)
+            const e = runsEntry(owner, 'Northern Lands', true);
+            if (rWin) { e.rw++; runsBox(owner).dirty = true; if (process.env.RUNS_DEBUG) console.log('[runs-debug] Rodin win (doc lap hoan toan voi dungeon chinh)', owner, name); }
+            else { e.rl++; runsBox(owner).dirty = true; if (process.env.RUNS_DEBUG) console.log('[runs-debug] Rodin loss (doc lap hoan toan voi dungeon chinh)', owner, name); }
+          }
+        }
       }
       st.bbStatus = curBb;
     }
@@ -7206,7 +7223,7 @@ function runsTrack(owner, name, rec, now0) {
         if (process.env.RUNS_DEBUG) console.log('[runs-debug] bo qua (ve lobby do bam Force lobby, khong phai thua)', owner, name);
         runsDbgPush({ t: now0, k: 'discard', owner, run: { dungeon: st.dungeon || null, win: false, forced: true } });
       } else {
-        runsConclude(owner, { dungeon: st.dungeon, jobId: st.jobId, win: false }, now0);
+        await runsConclude(owner, { dungeon: st.dungeon, jobId: st.jobId, win: false }, now0);
       }
       st.active = false; st.verdictSince = null; st.pendingWin = false;
     }
@@ -7222,7 +7239,7 @@ function runsTrack(owner, name, rec, now0) {
   // THUA CHAC CHAN (giong E() ben Harvard): het mang (noLivesLeft) hoac het gio (outOfTime) - chot NGAY, khong doi grace.
   if (rec.dungeonProgress === 'noLivesLeft' || rec.dungeonProgress === 'outOfTime') {
     if (process.env.RUNS_DEBUG) console.log('[runs-debug] thua chac chan (dungeonProgress=' + rec.dungeonProgress + ')', { owner, name });
-    runsConclude(owner, { dungeon: st.dungeon, jobId: st.jobId, win: false }, now0);
+    await runsConclude(owner, { dungeon: st.dungeon, jobId: st.jobId, win: false }, now0);
     st.active = false; st.verdictSince = null; st.pendingWin = false;
     return;
   }
@@ -7237,18 +7254,18 @@ function runsTrack(owner, name, rec, now0) {
     if (st.verdictSince == null || st.pendingWin !== winSignal) { st.verdictSince = now0; st.pendingWin = winSignal; }
     if (now0 - st.verdictSince >= VERDICT_GRACE_MS) {
       if (process.env.RUNS_DEBUG) console.log('[runs-debug] chot sau grace', { owner, name, win: winSignal });
-      runsConclude(owner, { dungeon: st.dungeon, jobId: st.jobId, win: winSignal }, now0);
+      await runsConclude(owner, { dungeon: st.dungeon, jobId: st.jobId, win: winSignal }, now0);
       st.active = false; st.verdictSince = null; st.pendingWin = false;
     }
   } else {
     st.verdictSince = null; st.pendingWin = false;
   }
 }
-function runsConclude(owner, run, now) {   // ghi 1 luot da ket thuc vao bang thang/thua (dungeon chinh - Rodin da duoc cong rieng tu runsTrack, xem o tren)
+async function runsConclude(owner, run, now) {   // ghi 1 luot da ket thuc vao bang thang/thua (dungeon chinh - Rodin da duoc cong rieng tu runsTrack, xem o tren)
   const dn = run.dungeon || 'Unknown';   // khong doan duoc dungeon (chua gan Party/map khong khop) -> van dem vao "Unknown" thay vi bo qua luot
   const jid = run.jobId || null;
   const mainKind = dn + '\u0001' + (run.win ? 'win' : 'loss');
-  if (!runsJobMarkClaim(owner, jid, mainKind)) {
+  if (!(await runsJobMarkClaim(owner, jid, mainKind))) {
     // Acc KHAC trong CUNG party (cung jobId) da bao cao ket qua nay cho CUNG luot roi (xem RUNS_JOB_MARK_TTL_MS o
     // tren) - bo qua, tranh dem trung theo so acc trong party. (Day cung la gioi han da biet so voi ban goc cua
     // Harvard: ho dung file .w/.l rieng theo jobId va cho THANG luon de ghi de len 1 THUA cu cung jobId; o day don
@@ -8510,7 +8527,7 @@ a{display:block;padding:15px;border-radius:12px;background:#5865f2;color:#fff;te
   if (p === '/api/report' && req.method === 'POST') {
     let body = '';
     req.on('data', c => { body += c; if (body.length > 3e5) req.destroy(); });
-    req.on('end', () => {
+    req.on('end', async () => {   // async: runsTrack/runsConclude gio can await (claim chong-dem-trung qua Redis)
       let b; try { b = JSON.parse(body); } catch { return send(res, 400, { error: 'bad json' }); }
       const name = s(b.name, 50); if (!name) return send(res, 400, { error: 'no name' });
       if (b.statusOnly === true) {   // chi cap nhat trang thai loi/captcha, khong dung toi kho do
@@ -8603,7 +8620,7 @@ a{display:block;padding:15px;border-radius:12px;background:#5865f2;color:#fff;te
       const lost = ((prev && prev.lost) || []).filter(l => now0 - l.at < TRADE_WINDOW && mine[name].n - (l.n || 0) < STALE_UPDATES).concat(lostNow.map(l => ({ ...l, n: mine[name].n }))).slice(-LOST_HIST_MAX);   // 'lost' het han sau 2 lan cap nhat
       if (lost.length) mine[name].lost = lost;
       if (wr.winSeen) { mine[name].winSeen = true; if (wr.win) mine[name].win = wr.win; if (wr.cand.length) mine[name].cand = wr.cand; else delete mine[name].cand; }
-      try { runsTrack(a.owner, name, mine[name].rec, now0); } catch (e) { console.error('[runs-track] loi: ' + e.message); }   // tu dong dem Total Run - nhai dung co che cua Harvard (dungeonProgress/dungeonFinished/timeLeftGui..., xem runsTrack)
+      try { await runsTrack(a.owner, name, mine[name].rec, now0); } catch (e) { console.error('[runs-track] loi: ' + e.message); }   // tu dong dem Total Run - nhai dung co che cua Harvard (dungeonProgress/dungeonFinished/timeLeftGui..., xem runsTrack)
       // ===== XOA DU LIEU CU: khi co du lieu moi, bo cac ban ghi cu khong con lien quan (tranh tich luy -> lag web) =====
       if (mine[name].drops && mine[name].drops.length > DROP_HIST_MAX) mine[name].drops = mine[name].drops.slice(-DROP_HIST_MAX);
       if (mine[name].lost && mine[name].lost.length > LOST_HIST_MAX) mine[name].lost = mine[name].lost.slice(-LOST_HIST_MAX);
