@@ -7245,7 +7245,7 @@ async function runsTrack(owner, name, rec, now0) {
       if (process.env.RUNS_DEBUG) console.log('[runs-debug] ve lobby, chua co tin hieu ro rang -> khong tinh', { owner, name });
       runsDbgPush({ t: now0, k: 'discard', owner, run: { dungeon: st.dungeon || null, win: false, noSignal: true } });
     }
-    st.active = false; st.realStart = false;
+    st.active = false; st.realStart = false; st.lastDungeonStarted = false;   // ve lobby = coi nhu dungeonStarted da "ve false" (du game khong gui false that), de lan sau vao dungeon canh dung canh len
     return;
   }
 
@@ -7254,12 +7254,15 @@ async function runsTrack(owner, name, rec, now0) {
   st.lastAt = now0;
   if (liveDungeon) st.dungeon = liveDungeon;
   if (jobId) st.jobId = jobId;
-  // "Replay dungeon" (choi lai ngay, khong roi khoi may chu Roblox) co the giu nguyen jobId/placeId, va script
-  // Lua co the mat 1-2 nhip chua kip xoa dungeonFinished/dungeonProgress cua LUOT VUA XONG truoc khi luot MOI thuc
-  // su bat dau - neu tin ngay thi luot moi se bi "an theo" ket qua cu (vd vua thang xong, bam choi lai lien thi bi
-  // tinh thang luon cho luot chua lam gi ca). Can thay dungeonStarted=true THAT (dau hieu luot moi da thuc su bat
-  // dau) it nhat 1 lan truoc khi tin bat ky tin hieu thang/thua nao trong luot dang theo doi nay.
-  if (rec.dungeonStarted === true) st.realStart = true;
+  // "Replay dungeon" / man hinh "da thang" con treo vai giay (khong roi may chu Roblox) co the giu dungeonStarted=
+  // true LIEN TUC tu luot VUA XONG sang luot moi (khong he tat ve false/null giua chung) - neu chi kiem tra "dang
+  // = true" thi luot moi se mo ra NGAY LAP TUC o chinh nhip vua chot xong (vi dungeonFinished cung con treo true),
+  // chot THANG LAN 2 cho CUNG 1 lan thang that -> day la nguyen nhan loi "dem gap doi" nguoi dung bao. Phai doi
+  // dungeonStarted THUC SU CHUYEN tu KHONG true (null/false) SANG true (dung 1 nhip "canh len" that) moi cong nhan
+  // la luot MOI, khong chi can dang doc thay true la du.
+  const startedNow = rec.dungeonStarted === true;
+  if (startedNow && st.lastDungeonStarted !== true) st.realStart = true;
+  st.lastDungeonStarted = startedNow;
   if (!st.realStart) return;
 
   // THANG: dungeonFinished=true -> chot THANG NGAY, khong doi. (Bo tin hieu dungeonProgress=="bossKilled" theo
