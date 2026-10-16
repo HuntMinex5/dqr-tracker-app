@@ -40,7 +40,7 @@
       "uninstallerIcon": "icon.ico",
       "uninstallDisplayName": "DQR Tracker",
       "deleteAppDataOnUninstall": false,
-      "artifactName": "DQR-Tracker-Setup-${version}.${ext}"
+      "artifactName": "DQR-Tracker-Setup.${ext}"
     }
   }
 }
