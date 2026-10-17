@@ -7152,16 +7152,24 @@ function runsEntry(owner, name, mk) { const b = runsBox(owner), d = b.data; let 
 // dai, lam CAC LUOT THANG THAT SU sau do cung dungeon+ket qua, cung jobId, trong vong 1 tieng do bi hieu nham la
 // "bao lai" va bi loai bo het - day la nguyen nhan "danh thang roi ma khong cong" nguoi dung bao).
 const RUNS_JOB_MARK_TTL_MS = 60 * 1000;
+// RIENG CHO RODIN (fix loi "thang Rodin lien tuc ma khong +win tu lan 2": dungeon chinh thuong mat hon 60s/luot
+// nen TTL 60s o tren an toan, nhung Rodin la "boss phu" bi ha RAT NHANH roi Replay ngay - thuong duoi 60s/luot -
+// nen dung CHUNG TTL 60s se khoa luon ca cac LUOT THANG THAT SU ke tiep trong cung 60s do (cung owner+jobId+"rodin
+// win" -> bi hieu nham la bao lai, giong dung HET nguyen nhan "danh thang roi khong cong" nhung xay ra RIENG cho
+// Rodin do toc do ha boss qua nhanh). TTL ngan hon nhieu (8s) van du de gom bao cao cua nhieu acc CUNG party cho
+// DUNG 1 lan ha boss (client bao cao moi ~1s/lan theo Interval mac dinh, grace 20s cu da bi bo - xem comment tren),
+// nhung khong du dai de chan lan Rodin KE TIEP (vua ha xong, bam Replay, choi lai) bi tinh nham la trung.
+const RUNS_RODIN_JOB_MARK_TTL_MS = 8 * 1000;
 // TRUOC DAY: Map trong RAM (trong 1 tien trinh). Tren Vercel moi request co the roi vao 1 may chu (serverless
 // instance) KHAC NHAU - moi may co RAM rieng, khong thay duoc mark cua may khac - nen 1 luot thang/thua THAT co
 // the bi NHIEU may chu khac nhau DOC LAP chot cung 1 luot do (vi co che grace 20s o rjTrack cung chi "nho" trong
 // RAM cua tung may) -> 1 luot thuc te bi dem thanh 2-3-4 luot. Day la nguyen nhan "dang ngoi canh, moi di 3 luot
 // ma no nhay len 13". Fix: chuyen qua Redis SET...NX (chi 1 may duoc "chot" dau tien cho 1 jobId+loai ket qua,
 // moi noi khac deu thay la da co -> tu dong bo qua), dam bao dung 1 lan du request roi vao may chu nao.
-async function runsJobMarkClaim(owner, jobId, kind) {   // tra ve true neu DAY LA LAN DAU claim duoc (duoc cong diem); false neu da co noi khac claim roi (bo qua, tranh dem trung)
+async function runsJobMarkClaim(owner, jobId, kind, ttlMs) {   // tra ve true neu DAY LA LAN DAU claim duoc (duoc cong diem); false neu da co noi khac claim roi (bo qua, tranh dem trung). ttlMs: cho phep Rodin dung TTL rieng ngan hon (xem RUNS_RODIN_JOB_MARK_TTL_MS)
   if (!jobId) return true;   // khong co jobId (hiem, du lieu cu/thieu) thi khong du de dedup - cho qua nhu truoc gio, khong chan
   const key = 'dq:runsmark:' + owner + '\u0001' + jobId + '\u0001' + kind;
-  try { const [r] = await redis([['SET', key, '1', 'NX', 'PX', String(RUNS_JOB_MARK_TTL_MS)]]); return r === 'OK'; }
+  try { const [r] = await redis([['SET', key, '1', 'NX', 'PX', String(ttlMs || RUNS_JOB_MARK_TTL_MS)]]); return r === 'OK'; }
   catch (e) { return true; }   // loi mang luc check: tha qua (thieu 1 vai luot con hon la bi ket treo khong dem duoc gi)
 }
 
@@ -7229,7 +7237,7 @@ async function runsTrack(owner, name, rec, now0) {
       if (rWin !== null && !st.bbDone) {
         st.bbDone = true;   // chot roi - khoa lai, cho lan sau thay dungeonProgress VE SACH (luot Rodin MOI that) moi mo khoa tiep (xem nhanh tren)
         const rKind = 'rodin\u0001' + (rWin ? 'win' : 'loss');
-        if (await runsJobMarkClaim(owner, jobId, rKind)) {   // chong dem trung Rodin qua nhieu may chu Vercel, giong het dungeon chinh (xem runsJobMarkClaim)
+        if (await runsJobMarkClaim(owner, jobId, rKind, RUNS_RODIN_JOB_MARK_TTL_MS)) {   // chong dem trung Rodin qua nhieu may chu Vercel, nhung dung TTL RIENG NGAN HON (8s) vi Rodin ha qua nhanh - TTL 60s chung voi dungeon chinh se chan mat cac lan thang Rodin KE TIEP (xem RUNS_RODIN_JOB_MARK_TTL_MS)
           const e = runsEntry(owner, 'Northern Lands', true);
           if (rWin) { e.rw++; runsBox(owner).dirty = true; if (process.env.RUNS_DEBUG) console.log('[runs-debug] Rodin win (kill boss, doc lap hoan toan voi dungeon chinh)', owner, name); }
           else { e.rl++; runsBox(owner).dirty = true; if (process.env.RUNS_DEBUG) console.log('[runs-debug] Rodin loss (het gio/het mang, doc lap hoan toan voi dungeon chinh)', owner, name); }
