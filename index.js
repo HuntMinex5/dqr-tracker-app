@@ -7210,14 +7210,21 @@ async function runsTrack(owner, name, rec, now0) {
       // cho luot chua lam gi ca (dung y chang loi "Replay bi an theo ket qua cu" o trum chinh). Phai thay
       // dungeonProgress DA VE SACH (khong con la bossKilled/noLivesLeft/outOfTime) it nhat 1 lan sau khi vao Rodin,
       // moi bat dau tin tin hieu thang/thua tiep theo cho LAN RODIN NAY.
-      if (!['bossKilled', 'noLivesLeft', 'outOfTime'].includes(rec.dungeonProgress)) st.bbRealStart = true;
+      //
+      // QUAN TRONG (fix loi "tu lan Rodin thu 2 tro di khong duoc +win" nguoi dung bao khi ha boss xong bam Replay
+      // NGAY TAI CHO - bonusBossStatus KHONG HE roi "active" giua 2 lan Replay lien tuc, nen nhanh else ben duoi
+      // [noi DUY NHAT truoc day mo khoa lai bbDone] KHONG BAO GIO chay, bbDone bi khoa cung mai mai sau lan thang
+      // DAU TIEN): moi lan thay dungeonProgress VE SACH trong luc dang active, coi do la dau hieu 1 LUOT RODIN MOI
+      // dang bat dau (du chi la boss moi vua spawn sau khi bam Replay, chua roi "active" lan nao) -> MO KHOA bbDone
+      // ngay tai day, giong het co che sawClearFinished cua dungeon chinh - thay vi chi mo khoa khi roi han "active".
+      if (!['bossKilled', 'noLivesLeft', 'outOfTime'].includes(rec.dungeonProgress)) { st.bbRealStart = true; st.bbDone = false; }
       let rWin = null;
       if (st.bbRealStart) {
         if (rec.dungeonProgress === 'bossKilled') rWin = true;   // kill boss Rodin = thang
         else if (rec.timeUp === true || rec.dungeonProgress === 'noLivesLeft' || rec.dungeonProgress === 'outOfTime') rWin = false;   // het gio/het mang = thua
       }
       if (rWin !== null && !st.bbDone) {
-        st.bbDone = true;   // chi chot 1 lan cho moi lan vao Rodin (bonusBossStatus ve active lai = lan Rodin moi, xem nhanh o duoi)
+        st.bbDone = true;   // chot roi - khoa lai, cho lan sau thay dungeonProgress VE SACH (luot Rodin MOI that) moi mo khoa tiep (xem nhanh tren)
         const rKind = 'rodin\u0001' + (rWin ? 'win' : 'loss');
         if (await runsJobMarkClaim(owner, jobId, rKind)) {   // chong dem trung Rodin qua nhieu may chu Vercel, giong het dungeon chinh (xem runsJobMarkClaim)
           const e = runsEntry(owner, 'Northern Lands', true);
