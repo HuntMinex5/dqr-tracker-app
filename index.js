@@ -129,6 +129,27 @@ process.on('SIGINT', () => process.exit(0));
 const pairs = arr => { const raw = {}; if (Array.isArray(arr)) for (let i = 0; i + 1 < arr.length; i += 2) raw[arr[i]] = arr[i + 1]; return raw; };
 const parseAll = raw => { const o = {}; for (const [k, v] of Object.entries(raw)) { try { o[k] = JSON.parse(v); } catch {} } return o; };
 
+// ===== CACHE NGAN (1.5s) cho cac lenh DOC (HGETALL dq:users / dq:acc:<owner>) - GIAM MANH SO LENH REDIS =====
+// TRUOC DAY: loadState() doc lai TOAN BO dq:users (+ dq:acc:<owner> qua loadOwner) tu Redis tren MOI request, KE
+// CA nhip tim/heartbeat nhe khong thay doi gi - voi tan suat bao cao ~1 lan/giay/account (nhan 3 account chay lien
+// tuc nhieu gio/ngay) con so nay cong don len toi HANG TRIEU lenh Redis khong can thiet (nguoi dung bao chi 2 ngay
+// da ton ~7$ phi Upstash, tang nhanh thay ro ngay truoc mat). du lieu nay (danh sach user/account) CHI doi khi co
+// thao tac admin that su (tao user, them/bot account...) - RAT hiem so voi tan suat doc. Cache 1.5s (ngan hon ca
+// Interval bao cao mac dinh 1s) la DU AN TOAN: khong anh huong gi den do "real-time" cua tracker, chi gop nhieu
+// lan doc GIONG HET NHAU trong cung 1 cua so ngan lai thanh 1 lan Redis that su. Lenh GHI (saveState) KHONG dong
+// toi cache nay - ghi van chay binh thuong, chi can nho invalidate (xoa cache) ngay sau khi ghi de chinh tien
+// trinh nay thay duoc du lieu moi cua minh ngay, khong phai doi het 1.5s (xem rcInvalidate trong saveState).
+const RC_TTL_MS = 1500;
+const rcCache = new Map();   // key -> { at, val }
+async function rcHgetall(key) {
+  const hit = rcCache.get(key), now = Date.now();
+  if (hit && now - hit.at < RC_TTL_MS) return hit.val;
+  const [h] = await redis([['HGETALL', key]]);
+  rcCache.set(key, { at: now, val: h });
+  return h;
+}
+const rcInvalidate = key => rcCache.delete(key);
+
 let owners = {}, dirty = false;                 // owners chi chua kho cua owner da nap trong request nay
 const auth = { users: {}, licenses: {}, sessions: {} };
 let authDirty = false;
@@ -166,24 +187,29 @@ function takeForceLobbyPending(owner, name) {   // runsTrack goi khi thay acc vu
 
 async function loadOwner(o) {
   if (!o || loadedOwners.has(o)) return;
-  const [h] = await redis([['HGETALL', 'dq:acc:' + o]]);
+  const h = await rcHgetall('dq:acc:' + o);   // cache ngan 1.5s - xem ghi chu o rcHgetall
   const raw = pairs(h); snap.acc[o] = raw; owners[o] = parseAll(raw); loadedOwners.add(o);
 }
 let has = { licenses: false, sessions: false };
 async function loadState(req) {
-  owners = {}; dirty = false; authDirty = false; loadedOwners.clear(); trade = { owner: '', jobs: {}, loaded: false, hist: {}, histNew: {}, histDel: [] }; snap = { users: {}, licenses: {}, sessions: {}, acc: {}, trade: {} }; sellStore.clear(); buyStore.clear(); RUNS.boxes.clear();
+  owners = {}; dirty = false; authDirty = false; loadedOwners.clear(); trade = { owner: '', jobs: {}, loaded: false, hist: {}, histNew: {}, histDel: [] }; snap = { users: {}, licenses: {}, sessions: {}, acc: {}, trade: {} }; sellStore.clear(); buyStore.clear();
+  // RUNS.boxes KHONG con bi xoa (clear) o day nua - xem ghi chu o loadRunsBox: tu lam moi theo TTL rieng, khong
+  // can nap lai tu Redis tren MOI request nhu truoc (nguyen nhan chinh gay ton phi Redis - xem ghi chu o rcHgetall).
   auth.users = {}; auth.licenses = {}; auth.sessions = {}; counts = {};
   const pth = String(req.url || '').split('?')[0];
   const needAll = pth === '/' || pth.startsWith('/admin') || pth.startsWith('/auth/') || pth === '/api/me' || pth === '/api/me/token' || pth === '/api/redeem';
   const needSess = needAll || /(?:^|;\s*)dq_sid=/.test(String(req.headers.cookie || ''));
   has = { licenses: needAll, sessions: needSess };
-  const cmds = [['HGETALL', 'dq:users']];
-  if (needAll) cmds.push(['HGETALL', 'dq:licenses'], ['HGETALL', 'dq:counts']);
-  if (needSess) cmds.push(['HGETALL', 'dq:sessions']);
-  const out = await redis(cmds); let k = 0;
-  snap.users = pairs(out[k++]); auth.users = parseAll(snap.users);
-  if (needAll) { snap.licenses = pairs(out[k++]); auth.licenses = parseAll(snap.licenses); counts = pairs(out[k++]); }
-  if (needSess) { snap.sessions = pairs(out[k++]); auth.sessions = parseAll(snap.sessions); }
+  const usersHash = await rcHgetall('dq:users');   // cache ngan 1.5s (chay tren MOI request, ke ca heartbeat) - xem ghi chu o rcHgetall
+  snap.users = pairs(usersHash); auth.users = parseAll(snap.users);
+  if (needAll || needSess) {
+    const cmds = [];
+    if (needAll) cmds.push(['HGETALL', 'dq:licenses'], ['HGETALL', 'dq:counts']);
+    if (needSess) cmds.push(['HGETALL', 'dq:sessions']);
+    const out = await redis(cmds); let k = 0;
+    if (needAll) { snap.licenses = pairs(out[k++]); auth.licenses = parseAll(snap.licenses); counts = pairs(out[k++]); }
+    if (needSess) { snap.sessions = pairs(out[k++]); auth.sessions = parseAll(snap.sessions); }
+  }
   tokenIdx.clear();
   for (const x of Object.values(auth.users)) if (x && x.token) tokenIdx.set(x.token, x.id);
   if (needAll && !pth.startsWith('/auth/')) purgeNoKeyUsers(Date.now());
@@ -209,13 +235,16 @@ function diffCmds(key, cur, old, cmds) {
 async function saveState() {
   const cmds = [];
   if (authDirty) {
+    const n0 = cmds.length;
     diffCmds('dq:users', auth.users, snap.users, cmds);
+    if (cmds.length !== n0) rcInvalidate('dq:users');   // vua ghi thay doi that -> xoa cache ngay de CHINH tien trinh nay (va cac request sau) thay du lieu moi ngay, khong phai doi het 1.5s (xem rcHgetall)
     if (has.licenses) diffCmds('dq:licenses', auth.licenses, snap.licenses, cmds);
     if (has.sessions) diffCmds('dq:sessions', auth.sessions, snap.sessions, cmds);
   }
   for (const o of loadedOwners) {
     const before = cmds.length;
     diffCmds('dq:acc:' + o, owners[o] || {}, snap.acc[o] || {}, cmds);
+    if (cmds.length !== before) rcInvalidate('dq:acc:' + o);   // tuong tu dq:users o tren
     const n = Object.keys(owners[o] || {}).length;
     if (n !== Object.keys(snap.acc[o] || {}).length) cmds.push(['HSET', 'dq:counts', o, String(n)]);
   }
@@ -7104,12 +7133,21 @@ function runsDbgPush(o) { RUNS.dbg.push(o); if (RUNS.dbg.length > 2000) RUNS.dbg
 // het sellStore/buyStore: chuyen qua Redis (dq:runs:<owner>, 1 key JSON/owner), nap dau request can, ghi lai cuoi
 // request neu co thay doi (dirty). "Total Run Time" (runsTime/MON, chi chay tren may user qua Local Agent, van
 // con duong ghi file cu) KHONG dung toi, giu nguyen.
-const runsBox = o => { let b = RUNS.boxes.get(o); if (!b) RUNS.boxes.set(o, b = { data: {}, loaded: false, dirty: false }); return b; };
+const runsBox = o => { let b = RUNS.boxes.get(o); if (!b) RUNS.boxes.set(o, b = { data: {}, loaded: false, dirty: false, loadedAt: 0 }); return b; };
+// TRUOC DAY: loadState() xoa SACH RUNS.boxes tren MOI request (dong "RUNS.boxes.clear()" da bi xoa - xem loadState),
+// bat loadRunsBox phai doc lai dq:runs:<owner> tu Redis MOI LAN, ke ca khi KHONG CO GI thay doi (vd heartbeat).
+// Voi tan suat bao cao ~1 lan/giay/account, day la 1 trong nhung nguyen nhan chinh gay ton hang trieu lenh Redis
+// khong can thiet. Gio RUNS.boxes duoc GIU LAI giua cac request (chi 1 tien trinh Vercel xu ly TUAN TU nho
+// runExclusive - xem cuoi file), chi doc lai tu Redis khi: chua tung nap (loaded=false), HOAC da qua 1.5s ke tu
+// lan nap gan nhat (de van bat kip neu co tien trinh Vercel KHAC cung ghi du lieu cua owner nay). Neu dang co ghi
+// CHUA KIP luu (dirty=true, hiem, thuong do saveState() bi loi mang) thi KHONG doc lai de khong lam MAT du lieu
+// chua luu do - uu tien thu luu lai o lan sau thay vi ghi de bang ban cu tren Redis.
 async function loadRunsBox(o) {
-  if (runsBox(o).loaded) return;
-  let data = {}; try { const [raw] = await redis([['GET', 'dq:runs:' + o]]); data = raw ? JSON.parse(raw) : {}; } catch (e) { data = {}; }
-  if (!data || typeof data !== 'object') data = {};
-  RUNS.boxes.set(o, { data, loaded: true, dirty: false });
+  const b = runsBox(o), now = Date.now();
+  if (b.loaded && (b.dirty || now - b.loadedAt < RC_TTL_MS)) return;
+  let data = {}; try { const [raw] = await redis([['GET', 'dq:runs:' + o]]); data = raw ? JSON.parse(raw) : {}; } catch (e) { data = b.loaded ? b.data : {}; }
+  if (!data || typeof data !== 'object') data = b.loaded ? b.data : {};
+  RUNS.boxes.set(o, { data, loaded: true, dirty: false, loadedAt: now });
 }
 const runsFile = () => path.join(path.dirname(DATA_FILE), 'data', 'tracker_runs.json');
 const runsImgDir = () => path.join(path.dirname(DATA_FILE), 'data', 'dungeon_img');
