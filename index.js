@@ -7094,7 +7094,10 @@ function monEnsure() {
 // ===== TOTAL RUN: so lan di tung dungeon, thang / thua (Northern Lands co them Rodin); anh nen lay tu wiki =====
 const RUNS_NAMES = ['Desert Temple', 'Winter Outpost', 'Pirate Island', "King's Castle", 'The Underworld', 'Samurai Palace', 'The Canals', 'Ghastly Harbor', 'Steampunk Sewers', 'Orbital Outpost', 'Volcanic Chambers', 'Aquatic Temple', 'Enchanted Forest', 'Northern Lands', 'Gilded Skies', 'Unknown'];   // doi chieu dung tu file game (u2 list trong DungeonReleases). Bo 'Boss Raid' theo yeu cau (khong hien the nay nua); luot nao bao dungeonName='Boss Raid' se roi vao 'Unknown' nhu cac dungeon la khong nhan dien duoc khac. 'Unknown': khong doan duoc dungeon (chua gan Party / map khong khop / script cu chua bao dungeonName) - van dem win/loss vao day thay vi bo qua
 const RUNS = { db: null, timer: null, img: new Map(), imgBusy: new Map(), live: {}, dbg: [], boxes: new Map() };
-function runsDbgPush(o) { RUNS.dbg.push(o); if (RUNS.dbg.length > 300) RUNS.dbg.splice(0, RUNS.dbg.length - 300); }
+// 2000 dong (truoc la 300) - bo dem nay DUNG CHUNG cho TOAN BO nguoi dung trang web, neu nhieu nguoi cung dang
+// hoat dong thi log cu cua 1 nguoi se bi day ra rat nhanh khi gioi han qua thap, gay hieu lam "khong co gi xay ra"
+// trong khi thuc ra chi la bi troi mat (nguoi dung bao cao gap truong hop nay khi tu kiem tra /api/runs/debug).
+function runsDbgPush(o) { RUNS.dbg.push(o); if (RUNS.dbg.length > 2000) RUNS.dbg.splice(0, RUNS.dbg.length - 2000); }
 // Thang/thua tung dungeon (runsEntry/runsTrack/runsConclude) TRUOC DAY nam chung trong 1 file tracker_runs.json
 // ghi bang fs.writeFileSync - tren Vercel dia chi doc duoc nhung KHONG ghi lau dai (serverless, moi lan goi co
 // the roi vao may chu khac nhau, file ghi bi mat khi instance bi thu hoi) nen Win/Loss luon ve lai 0. Fix giong
