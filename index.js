@@ -7245,12 +7245,12 @@ async function runsTrack(owner, name, rec, now0) {
       if (process.env.RUNS_DEBUG) console.log('[runs-debug] ve lobby, chua co tin hieu ro rang -> khong tinh', { owner, name });
       runsDbgPush({ t: now0, k: 'discard', owner, run: { dungeon: st.dungeon || null, win: false, noSignal: true } });
     }
-    st.active = false; st.realStart = false; st.lastDungeonStarted = false;   // ve lobby = coi nhu dungeonStarted da "ve false" (du game khong gui false that), de lan sau vao dungeon canh dung canh len
+    st.active = false; st.realStart = false; st.lastDungeonStarted = false; st.sawClearFinished = false;   // ve lobby = coi nhu dungeonStarted da "ve false" (du game khong gui false that), de lan sau vao dungeon canh dung canh len
     return;
   }
 
   // Dang trong dungeon: bat dau theo doi 1 luot moi neu chua co.
-  if (!st.active) { st.active = true; st.dungeon = liveDungeon || runsDungeonFor(owner, name); st.jobId = jobId; st.realStart = false; if (process.env.RUNS_DEBUG) console.log('[runs-debug] start run', { owner, name, dungeon: st.dungeon, jobId: st.jobId }); }
+  if (!st.active) { st.active = true; st.dungeon = liveDungeon || runsDungeonFor(owner, name); st.jobId = jobId; st.realStart = false; st.sawClearFinished = false; if (process.env.RUNS_DEBUG) console.log('[runs-debug] start run', { owner, name, dungeon: st.dungeon, jobId: st.jobId }); }
   st.lastAt = now0;
   if (liveDungeon) st.dungeon = liveDungeon;
   if (jobId) st.jobId = jobId;
@@ -7265,12 +7265,20 @@ async function runsTrack(owner, name, rec, now0) {
   st.lastDungeonStarted = startedNow;
   if (!st.realStart) return;
 
-  // THANG: dungeonFinished=true -> chot THANG NGAY, khong doi. (Bo tin hieu dungeonProgress=="bossKilled" theo
-  // yeu cau nguoi dung - "bossKilled" co the trung voi luc ha Rodin, de bi nham thanh thang dungeon chinh.)
-  if (rec.dungeonFinished === true) {
+  // Phong khi dang danh Raid Rodin KEO DAI (nhieu phut), dungeonFinished co the TREO true SUOT luc do (khong tat),
+  // va 1 nhip dungeonStarted choc len bat thuong (khong phai Replay that) se bi hieu nham la "luot moi" (qua check
+  // o tren) roi thay dungeonFinished con treo true -> chot THANG LAN 2 CHO CUNG 1 LAN THANG THAT du chua he di lai
+  // Northern Lands - day la nguyen nhan loi "dem gap doi trong luc dang danh Rodin" nguoi dung bao. Phai doi
+  // dungeonFinished DA VE SACH (khong con true) it nhat 1 lan ke tu lan chot THANG truoc, moi tin tin hieu
+  // dungeonFinished=true TIEP THEO la 1 lan thang MOI THAT SU.
+  if (rec.dungeonFinished !== true) st.sawClearFinished = true;
+
+  // THANG: dungeonFinished=true (VA da tung thay no ve sach ke tu lan thang truoc) -> chot THANG NGAY. (Bo tin hieu
+  // dungeonProgress=="bossKilled" theo yeu cau nguoi dung - "bossKilled" co the trung voi luc ha Rodin.)
+  if (rec.dungeonFinished === true && st.sawClearFinished) {
     if (process.env.RUNS_DEBUG) console.log('[runs-debug] thang (dungeonFinished)', { owner, name });
     await runsConclude(owner, { dungeon: st.dungeon, jobId: st.jobId, win: true }, now0);
-    st.active = false; st.realStart = false;
+    st.active = false; st.realStart = false; st.sawClearFinished = false;
     return;
   }
 
@@ -7278,7 +7286,7 @@ async function runsTrack(owner, name, rec, now0) {
   if (rec.timeUp === true || rec.dungeonProgress === 'noLivesLeft' || rec.dungeonProgress === 'outOfTime') {
     if (process.env.RUNS_DEBUG) console.log('[runs-debug] thua (het gio/het mang)', { owner, name });
     await runsConclude(owner, { dungeon: st.dungeon, jobId: st.jobId, win: false }, now0);
-    st.active = false; st.realStart = false;
+    st.active = false; st.realStart = false; st.sawClearFinished = false;
     return;
   }
   // Chua co tin hieu ro rang -> chua ket luan gi, tiep tuc theo doi luot nay.
